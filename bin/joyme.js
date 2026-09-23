@@ -44,6 +44,23 @@
  * 敏感值（内部网关地址/app key）不写入仓库，运行时从环境变量读取，
  * 见 README 的「环境变量」一节。缺省时脚本会提示需要设置哪些变量。
  */
+
+
+// 自动加载同仓库的 .env.local（真实地址只存本机，不进 git）
+(function loadEnvLocal() {
+  const fs = require("fs"), path = require("path");
+  for (const p of [path.join(__dirname, "..", ".env.local"), path.join(__dirname, ".env.local")]) {
+    try {
+      const txt = fs.readFileSync(p, "utf8");
+      for (const line of txt.split("\n")) {
+        const m = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"?([^"\r\n]*)"?\s*$/);
+        if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2];
+      }
+      return;
+    } catch { /* try next */ }
+  }
+})();
+
 // ===== 环境配置（本仓库不含任何真实内部地址/密钥）=====
 function requireEnv(name, value) {
   if (!value || value.includes("<")) {
@@ -157,7 +174,8 @@ async function getSsoToken(meToken) {
     `https://${process.env.JOYME_SSO_HOST || requireEnv("JOYME_SSO_HOST", process.env.JOYME_SSO_HOST)}/sso/tp?name=${process.env.JOYME_SSO_NAME || "im"}&token=${encodeURIComponent(r1.data.code)}&returnUrl=${encodeURIComponent(`${JOYSPACE}?lang=zh_CN`)}`,
     { redirect: "manual" },
   );
-  const m = (res2.headers.get("set-cookie") || "").match(new RegExp(`${process.env.JOYME_SSO_COOKIE || "sso"}\.[^=]*=([^;]+)`));
+  const ssoCookieName = process.env.JOYME_SSO_COOKIE || "sso";
+  const m = (res2.headers.get("set-cookie") || "").match(new RegExp(`${ssoCookieName.replace(/\./g, "\\.")}=([^;]+)`));
   if (!m) throw new Error("SSO exchange failed: no SSO cookie");
   return m[1];
 }

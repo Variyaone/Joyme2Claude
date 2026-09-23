@@ -29,6 +29,23 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 
+
+
+// 自动加载同仓库的 .env.local（真实地址只存本机，不进 git）
+(function loadEnvLocal() {
+  const fs = require("fs"), path = require("path");
+  for (const p of [path.join(__dirname, "..", ".env.local"), path.join(__dirname, ".env.local")]) {
+    try {
+      const txt = fs.readFileSync(p, "utf8");
+      for (const line of txt.split("\n")) {
+        const m = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"?([^"\r\n]*)"?\s*$/);
+        if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2];
+      }
+      return;
+    } catch { /* try next */ }
+  }
+})();
+
 // ===== 环境配置（本仓库不含任何真实内部地址/密钥）=====
 function requireEnv(name, value) {
   if (!value || value.includes("<")) {
@@ -83,7 +100,8 @@ async function getSsoToken(meToken) {
   const r1 = await res.json();
   if (r1.code !== 0 || !r1.data?.code) throw new Error(`eopen.getCode failed`);
   const res2 = await rfetch(`https://${process.env.JOYME_SSO_HOST || requireEnv("JOYME_SSO_HOST", process.env.JOYME_SSO_HOST)}/sso/tp?name=${process.env.JOYME_SSO_NAME || "im"}&token=${encodeURIComponent(r1.data.code)}&returnUrl=${encodeURIComponent(`${BASE}?lang=zh_CN`)}`, { redirect: "manual" });
-  const m = (res2.headers.get("set-cookie") || "").match(new RegExp(`${process.env.JOYME_SSO_COOKIE || "sso"}\.[^=]*=([^;]+)`));
+  const ssoCookieName = process.env.JOYME_SSO_COOKIE || "sso";
+  const m = (res2.headers.get("set-cookie") || "").match(new RegExp(`${ssoCookieName.replace(/\./g, "\\.")}=([^;]+)`));
   if (!m) throw new Error("SSO exchange failed");
   return m[1];
 }

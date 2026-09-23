@@ -6,7 +6,22 @@
 //   node image-gen.js --save "<prompt>" [输出路径]       # 文生图并下载 PNG 到本地
 // 返回 JSON（含 imageUrl）；--save 同时下载文件
 
-const API_URL = "http://aigc-create-image-prod.jd.local/v1/api/imageGenerate";
+// 自动加载同仓库的 .env.local（真实地址只存本机，不进 git）
+(function loadEnvLocal() {
+  const fs = require("fs"), path = require("path");
+  for (const p of [path.join(__dirname, "..", ".env.local"), path.join(__dirname, ".env.local")]) {
+    try {
+      const txt = fs.readFileSync(p, "utf8");
+      for (const line of txt.split("\n")) {
+        const m = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"?([^"\r\n]*)"?\s*$/);
+        if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2];
+      }
+      return;
+    } catch { /* try next */ }
+  }
+})();
+
+const API_URL = process.env.JOYME_IMAGEGEN_URL || "http://<your-imagegen-api>";
 const fs = require("fs");
 const path = require("path");
 
