@@ -1,20 +1,33 @@
 #!/usr/bin/env node
 /**
- * joyme-direct.js — 脱离 openclaw/joyclaw，Claude 直接调 JoyMe 公司接口
+ * joyme.js — 脱离 openclaw/joyclaw，Claude 直接调 JoyMe 公司接口
  *
  * 认证链（每次运行自动完成，无需存储凭证）:
  *   1. desk.agent.auth.encrypt (Color 网关) → 加密载荷
  *   2. 本地京ME桌面端 HiOffice (127.0.0.1:8988) → appToken
  *   3. desk.agent.auth.getWebToken → me_token（约24h有效，本脚本不缓存）
- *   4. joyday/joyspace 需要时再换 SSO token（eopen.getCode → autherp.jd.com）
+ *   4. joyday/joyspace 需要时再换 SSO token（eopen.getCode → SSO）
  *
  * 用法:
- *   node joyme-direct.js <functionId> [bodyJSON]     调任意 Color 网关接口
- *   node joyme-direct.js --get-token                 打印 me_token
- *   node joyme-direct.js --get-sso                   打印 sso token (joyspace用)
- *   node joyme-direct.js --send <pin> <内容>          发京ME消息给个人
- *   node joyme-direct.js --send-group <gid> <内容>    发京ME消息到群
- *   node joyme-direct.js --joyspace <path> [bodyJSON]  JoySpace 文档接口
+ *   node joyme.js <functionId> [bodyJSON]           调任意 Color 网关接口
+ *   node joyme.js --get-token                        打印 me_token
+ *   node joyme.js --get-sso                          打印 sso token (joyspace用)
+ *   node joyme.js --send <pin> <内容>                发京ME消息给个人
+ *   node joyme.js --send-group <gid> <内容>          发京ME消息到群
+ *   node joyme.js --send-image <pin> <图片路径>       发图片消息（自动上传）
+ *   node joyme.js --send-image --group <gid> <路径>   发图片到群
+ *   node joyme.js --upload-image <图片路径>           仅上传取 URL，不发送
+ *   node joyme.js --upload-file <文件路径>            大文件分片上传（>10MB 自动分片）
+ *   node joyme.js --create-task '<JSON>'              建待办 {title,remark,startTime,endTime,owners[],remindStr}
+ *   node joyme.js --create-appointment '<JSON>'      建日程 {subject,startDate,endDate,attendees[],location,description}
+ *   node joyme.js --later-list                        稍后处理消息列表
+ *   node joyme.js --create-group <组名> <pin,...>     建群（需群管理权限，见README）
+ *   node joyme.js --group-members <gid>               群成员名单（同上）
+ *   node joyme.js --group-announcement <gid> <内容>  群公告（同上）
+ *   node joyme.js --mail [after] [before]             查邮件列表
+ *   node joyme.js --mail-detail <itemId>              查邮件正文
+ *   node joyme.js --msg-summary [天数|--pin <p>|--group <g>]  消息摘要
+ *   node joyme.js --joyspace <path> [bodyJSON]       JoySpace 文档接口
  *
  * 常用 functionId:
  *   login.getUserProfile                                我的身份
@@ -24,15 +37,30 @@
  *   joyday.appointment.addAppointmentClaw               建日程
  *   jdme.search.search                                  搜员工/群
  *   minutes.search / minutes.detail / minutes.asr       会议纪要
- *   joyspace 文档不走 functionId，用 --joyspace <path> <bodyJSON>（直连 apijoyspace.jd.com）
+ *   joyspace 文档不走 functionId，用 --joyspace <path> <bodyJSON>（直连文档 API）
  *
  * 前提: 京ME 桌面端在运行（Windows 本机 8988 端口）
+ *
+ * 敏感值（内部网关地址/app key）不写入仓库，运行时从环境变量读取，
+ * 见 README 的「环境变量」一节。缺省时脚本会提示需要设置哪些变量。
  */
-const BASE = "https://api.m.jd.com";
-const JOYSPACE = "https://apijoyspace.jd.com";
-const APPID = "JDME_DESKTOP";
-const DEVICE = "joycode-claude-win";
-const SSO_APP_KEY = "sL5qtKu71X8H25ysaaHB";
+// ===== 环境配置（本仓库不含任何真实内部地址/密钥）=====
+function requireEnv(name, value) {
+  if (!value || value.includes("<")) {
+    console.error(`缺少环境变量 ${name}（本仓库不含内部接口地址，请在你的 shell 配置里设置后重试，README 有清单）`);
+    process.exit(2);
+  }
+  return value;
+}
+const BASE = process.env.JOYME_API_BASE || "https://<your-gateway>";
+const JOYSPACE = process.env.JOYME_JOYSPACE_BASE || "https://<your-docs-api>";
+const APPID = requireEnv("JOYME_APPID", process.env.JOYME_APPID);
+const DEVICE = process.env.JOYME_DEVICE || "joyme2claude";
+const SSO_APP_KEY = process.env.JOYME_SSO_APP_KEY || "";
+const TENANT = process.env.JOYME_TENANT || "your-tenant";
+const TEAM_ID = process.env.JOYME_TEAM_ID || "";
+const FILE_DOMAIN = process.env.JOYME_FILE_BASE || "https://<your-file-host>";
+const MAIL_ENDPOINT = process.env.JOYME_MAIL_ENDPOINT || "https://<your-mail-endpoint>";
 
 // fetch 包装：网络偶发 fetch failed 时重试
 async function rfetch(url, opts = {}, retries = 2) {
@@ -57,13 +85,13 @@ async function getMeToken() {
   const content = JSON.stringify({
     method: "query", param: "appToken",
     timestamp: String(Math.floor(Date.now() / 1000)),
-    from: "hio_plugin_joydesk", to: "HiOfficeClient",
+    from: process.env.JOYME_HIO_FROM || "hio_plugin", to: "HiOfficeClient",
   });
   const enc = await postJson(`${BASE}/?functionId=desk.agent.auth.encrypt&appid=${APPID}`,
     { appid: APPID, body: { content, jdmeAppId: "ee" }, functionId: "desk.agent.auth.encrypt" });
   if (enc.code !== 0 || !enc.data?.aesKey) throw new Error(`encrypt failed: ${JSON.stringify(enc).slice(0, 300)}`);
 
-  const hio = await rfetch("http://127.0.0.1:8988/hioffice?from=hio_plugin_joydesk", {
+  const hio = await rfetch(`${process.env.JOYME_HIO_URL || "http://127.0.0.1:8988/hioffice"}?from=${process.env.JOYME_HIO_FROM || "hio_plugin"}`, {
     method: "POST",
     headers: { "X-AES-Key": enc.data.aesKey, "Content-Type": "application/json" },
     body: enc.data.content,
@@ -74,7 +102,7 @@ async function getMeToken() {
   if (!xAesKey) throw new Error(`HiOffice missing X-AES-Key: ${hioBody.slice(0, 200)}`);
 
   const gw = await postJson(`${BASE}/?functionId=desk.agent.auth.getWebToken&appid=${APPID}`,
-    { appid: APPID, body: { token: hioBody, tenantCode: "CN.JD.GROUP", deviceUuid: DEVICE, aesKey: xAesKey, jdmeAppId: "ee" }, functionId: "desk.agent.auth.getWebToken" });
+    { appid: APPID, body: { token: hioBody, tenantCode: TENANT, deviceUuid: DEVICE, aesKey: xAesKey, jdmeAppId: "ee" }, functionId: "desk.agent.auth.getWebToken" });
   const token = gw.data?.accessToken;
   if (gw.code !== 0 || !token) throw new Error(`getWebToken failed: ${JSON.stringify(gw).slice(0, 300)}`);
   return token;
@@ -82,9 +110,12 @@ async function getMeToken() {
 
 async function colorForm(functionId, token, body) {
   let appid = APPID;
-  if (/^(meetingAgent\.color|work\.task)/.test(functionId)) appid = "JoyWork";
-  else if (/^joyday\./.test(functionId)) appid = "JOYDAY_WEB";
-  else if (/^(minutes|clevernote)\./.test(functionId)) appid = "JoyMinutes";
+  const ROUTES = [
+    [/^(meetingAgent\.color|work\.task)/, process.env.JOYME_APP_TODO],
+    [/^joyday\./, process.env.JOYME_APP_CAL],
+    [/^(minutes|clevernote)\./, process.env.JOYME_APP_MINUTES],
+  ];
+  for (const [re, v] of ROUTES) if (re.test(functionId)) appid = v || appid;
   const needsWeb = appid !== "JOYDAY_WEB" && appid !== "JoyMinutes";
   const form = new URLSearchParams({
     appid, lang: "zh_CN", clientVersion: "1.0.0",
@@ -96,7 +127,7 @@ async function colorForm(functionId, token, body) {
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
       Cookie: `me_token=${token}`,
-      "x-team-id": "00046419", "x-tenant-code": "CN.JD.GROUP",
+      "x-team-id": TEAM_ID, "x-tenant-code": TENANT,
       "x-device-type": "web", logintype: "15",
       ...(needsWeb ? { "x-app-version": "1.0.0", "x-client": "WEB" } : {}),
     },
@@ -108,14 +139,14 @@ async function colorForm(functionId, token, body) {
 async function getSsoToken(meToken) {
   const form = new URLSearchParams({
     appid: APPID, clientVersion: "1.0.0",
-    body: JSON.stringify({ tenantCode: "CN.JD.GROUP", appKey: SSO_APP_KEY, jdmeAppId: "ee" }),
+    body: JSON.stringify({ tenantCode: TENANT, appKey: SSO_APP_KEY, jdmeAppId: "ee" }),
     client: "web", functionId: "eopen.getCode", loginType: "15",
   });
   const res = await rfetch(`${BASE}/?functionId=eopen.getCode&appid=${APPID}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
-      Cookie: `me_token=${meToken}`, "x-team-id": "00046419",
+      Cookie: `me_token=${meToken}`, "x-team-id": TEAM_ID,
       "x-device-type": "web", logintype: "15", "x-app-version": "1.0.0", "x-client": "WEB",
     },
     body: form.toString(),
@@ -123,11 +154,11 @@ async function getSsoToken(meToken) {
   const r1 = await res.json();
   if (r1.code !== 0 || !r1.data?.code) throw new Error(`eopen.getCode failed: ${JSON.stringify(r1).slice(0, 200)}`);
   const res2 = await rfetch(
-    `https://autherp.jd.com/sso/tp?name=joydesk&token=${encodeURIComponent(r1.data.code)}&returnUrl=${encodeURIComponent("https://joyspace.jd.com?lang=zh_CN")}`,
+    `https://${process.env.JOYME_SSO_HOST || requireEnv("JOYME_SSO_HOST", process.env.JOYME_SSO_HOST)}/sso/tp?name=${process.env.JOYME_SSO_NAME || "im"}&token=${encodeURIComponent(r1.data.code)}&returnUrl=${encodeURIComponent(`${JOYSPACE}?lang=zh_CN`)}`,
     { redirect: "manual" },
   );
-  const m = (res2.headers.get("set-cookie") || "").match(/sso\.jd\.com=([^;]+)/);
-  if (!m) throw new Error("SSO exchange failed: no sso.jd.com cookie");
+  const m = (res2.headers.get("set-cookie") || "").match(new RegExp(`${process.env.JOYME_SSO_COOKIE || "sso"}\.[^=]*=([^;]+)`));
+  if (!m) throw new Error("SSO exchange failed: no SSO cookie");
   return m[1];
 }
 
@@ -136,7 +167,7 @@ async function joyspaceCall(path, bodyJson) {
   const sso = await getSsoToken(token);
   const res = await rfetch(`${JOYSPACE}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Cookie: `sso.jd.com=${sso}`, "x-team-id": "00046419" },
+    headers: { "Content-Type": "application/json", Cookie: `${process.env.JOYME_SSO_COOKIE || "sso"}=${sso}`, "x-team-id": TEAM_ID },
     body: bodyJson,
   });
   return res.text();
@@ -156,18 +187,18 @@ async function getImEncryptKey(token) {
     clientType: "gw",
   };
   const form = new URLSearchParams({
-    appid: "JDME_DESKTOP", appName: "JDME", loginType: "15",
+    appid: APPID, appName: process.env.JOYME_APPNAME || "IM", loginType: "15",
     body: JSON.stringify({
       mode: "specify", clientVer: "7.20.27", from,
       id: "joycode-" + Date.now(), clientTime: Date.now(),
       key: "timline:client:skill:encrypt:key", jdmeAppId: "ee",
     }),
   });
-  const res = await rfetch(`${BASE}/?functionId=imCommon.api&appid=JDME_DESKTOP`, {
+  const res = await rfetch(`${BASE}/?functionId=imCommon.api&appid=${APPID}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
-      Cookie: `me_token=${token}`, "x-team-id": "00046419",
+      Cookie: `me_token=${token}`, "x-team-id": TEAM_ID,
       "x-im-app": "ee", "x-im-clientType": "gw", "x-im-funcVer": "1.2.8",
       "x-im-uri": "/gateway/my/getConfig", "x-im-uuid": "joycode-" + Math.random().toString(36).slice(2),
       loginType: "15",
@@ -213,19 +244,19 @@ async function sendImMessage(token, { to, gid, content }) {
     body: {
       type: "text", atUsers: [], expire: 0, content,
       requestData: { sessionId: createSessionId(from, gid ? null : to) },
-      businessFlag: "joyClaw",
+      businessFlag: process.env.JOYME_BIZ_FLAG || "external",
     },
   };
   const uri = gid ? "/gateway/group/chatMessage" : "/gateway/unimessage/chat";
   const form = new URLSearchParams({
-    appid: "JDME_DESKTOP", appName: "JDME", loginType: "15",
+    appid: APPID, appName: process.env.JOYME_APPNAME || "IM", loginType: "15",
     body: JSON.stringify({ request: aesEncrypt(keyBuffer, JSON.stringify(payload)) }),
   });
-  const res = await rfetch(`${BASE}/?functionId=imCommon.api&appid=JDME_DESKTOP`, {
+  const res = await rfetch(`${BASE}/?functionId=imCommon.api&appid=${APPID}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
-      Cookie: `me_token=${token}`, "x-team-id": "00046419",
+      Cookie: `me_token=${token}`, "x-team-id": TEAM_ID,
       "x-im-app": from.app, "x-im-clientType": "pc", "x-im-funcVer": "1.2.8",
       "x-im-uri": uri, "x-im-uuid": "joycode-" + Math.random().toString(36).slice(2),
       loginType: "15",
@@ -242,9 +273,138 @@ function createSessionId(from, to) {
   return fromStr > toStr ? `${toStr}:${fromStr}` : `${fromStr}:${toStr}`;
 }
 
+// ===== IM 网关直调（群操作/群成员/稍后处理列表，明文 JSON，无需 AES）=====
+
+async function imGateway(token, uri, data) {
+  const crypto = require("crypto");
+  const form = new URLSearchParams({
+    appid: APPID, appName: process.env.JOYME_APPNAME || "IM", loginType: "15",
+    body: JSON.stringify(data),
+  });
+  const res = await rfetch(`${BASE}/?functionId=imCommon.api&appid=${APPID}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Cookie: `me_token=${token}`, "x-team-id": TEAM_ID,
+      "x-im-app": "ee", "x-im-clientType": "gw", "x-im-funcVer": "1.2.8",
+      "x-im-uri": uri, "x-im-uuid": crypto.randomUUID().replaceAll("-", "").slice(0, 20),
+      loginType: "15",
+      "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36 Edg/145.0.0.0",
+    },
+    body: form.toString(),
+  });
+  return res.json();
+}
+
+// ===== 京ME 文件上传（图片直传 + 大文件分片断点续传）=====
+
+
+async function uploadImageFile(token, filePath) {
+  const from = await getFromUser(token);
+  const fs = require("fs");
+  const path = require("path");
+  const buf = fs.readFileSync(filePath);
+  const name = path.basename(filePath);
+  const ext = path.extname(name).toLowerCase().replace(".", "");
+  const mime = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", bmp: "image/bmp" }[ext] || "application/octet-stream";
+  const fd = new FormData();
+  fd.append("upload", new Blob([buf], { type: mime }), name);
+  for (const [k, v] of Object.entries({ clientType: "pc", appId: from.app, pin: from.pin }))
+    fd.append(k, v);
+  const res = await rfetch(`${FILE_DOMAIN}/file/uploadImg.action`, { method: "POST", headers: { Accept: "image/*" }, body: fd });
+  const j = await res.json();
+  if (j.code !== 0) throw new Error(`uploadImg failed: ${JSON.stringify(j).slice(0, 200)}`);
+  return j; // { code, path, height, width, md5, size, ... }
+}
+
+async function chunkUploadFile(token, filePath, { chunkSize = 10 * 1024 * 1024 } = {}) {
+  const crypto = require("crypto");
+  const fs = require("fs");
+  const path = require("path");
+  const from = await getFromUser(token);
+  const fileName = path.basename(filePath);
+  const fileSize = fs.statSync(filePath).size;
+  const fileType = path.extname(filePath).toLowerCase().replace(".", "") || "bin";
+  const totalParts = Math.ceil(fileSize / chunkSize);
+  const key = crypto.randomUUID().toUpperCase();
+  const cfg = { clientType: "pc", appId: from.app, pin: from.pin };
+
+  // 1. init 断点续传
+  const initQ = new URLSearchParams({ ...cfg, key, fileName, totalSize: String(fileSize), totalPartNumber: String(totalParts), lang: "zh_CN" });
+  const init = await (await rfetch(`${FILE_DOMAIN}/file/initUploadMultiFile.action?${initQ}`, { method: "POST", headers: { "Content-Type": "application/json;charset=utf-8" } })).json();
+  if (init.code !== 1) throw new Error(`initUpload failed: ${JSON.stringify(init).slice(0, 200)}`);
+  if (init.state === 1) return { ...init, fileName, fileSize, fileType }; // 降级签名直传
+
+  // 2. 逐片上传
+  const fd = fs.openSync(filePath, "r");
+  const parts = [];
+  try {
+    for (let seq = 1; seq <= totalParts; seq++) {
+      const start = (seq - 1) * chunkSize;
+      const len = Math.min(chunkSize, fileSize - start);
+      const buf = Buffer.alloc(len);
+      fs.readSync(fd, buf, 0, len, start);
+      const q = new URLSearchParams({ name: "upload", fileName, ...cfg, key, uploadId: init.uploadId, seq: String(seq), lang: "zh_CN" });
+      const mfd = new FormData();
+      mfd.append("upload", new Blob([new Uint8Array(buf)], { type: "application/octet-stream" }));
+      const up = await (await rfetch(`${FILE_DOMAIN}/file/uploadMultiFile.action?${q}`, { method: "POST", body: mfd })).json();
+      if (up.code !== 1 || !up.partNumber || !up.eTag) throw new Error(`chunk ${seq} failed: ${JSON.stringify(up).slice(0, 200)}`);
+      parts.push({ partNumber: up.partNumber, eTag: up.eTag });
+    }
+  } finally { fs.closeSync(fd); }
+
+  // 3. 合并
+  const cq = new URLSearchParams({ ...cfg, key, fileName, totalSize: String(fileSize), fileType, lang: "zh_CN" });
+  const done = await (await rfetch(`${FILE_DOMAIN}/file/completeMultiFile.action?${cq}`, {
+    method: "POST", headers: { "Content-Type": "application/json;charset=utf-8" },
+    body: JSON.stringify({ uploadId: init.uploadId, uploadPartList: parts.sort((a, b) => a.partNumber - b.partNumber) }),
+  })).json();
+  if (done.code !== 1) throw new Error(`completeUpload failed: ${JSON.stringify(done).slice(0, 200)}`);
+  return { ...done, fileName, fileSize, fileType };
+}
+
+// 发图片消息：先 uploadImg 拿 OSS path，再按 image 类型发
+async function sendImImage(token, { to, gid, imagePath }) {
+  const up = await uploadImageFile(token, imagePath);
+  const keyBuffer = await getImEncryptKey(token);
+  const from = await getFromUser(token);
+  const payload = {
+    from,
+    ...(gid ? { gid } : { to }),
+    id: "joycode-" + Date.now(),
+    type: "chat_message",
+    timestamp: Date.now(),
+    ver: "4.3",
+    body: {
+      type: "image", atUsers: [], expire: 0,
+      content: JSON.stringify({ url: up.path, width: up.width || 800, height: up.height || 600 }),
+      requestData: { sessionId: createSessionId(from, gid ? null : to) },
+      businessFlag: process.env.JOYME_BIZ_FLAG || "external",
+    },
+  };
+  const uri = gid ? "/gateway/group/chatMessage" : "/gateway/unimessage/chat";
+  const form = new URLSearchParams({
+    appid: APPID, appName: process.env.JOYME_APPNAME || "IM", loginType: "15",
+    body: JSON.stringify({ request: aesEncrypt(keyBuffer, JSON.stringify(payload)) }),
+  });
+  const res = await rfetch(`${BASE}/?functionId=imCommon.api&appid=${APPID}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Cookie: `me_token=${token}`, "x-team-id": TEAM_ID,
+      "x-im-app": from.app, "x-im-clientType": "pc", "x-im-funcVer": "1.2.8",
+      "x-im-uri": uri, "x-im-uuid": "joycode-" + Math.random().toString(36).slice(2),
+      loginType: "15",
+      "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36 Edg/145.0.0.0",
+    },
+    body: form.toString(),
+  });
+  return { sendResult: await res.text(), upload: up };
+}
+
 // ===== JoyMail 邮件（me_token → RSA登录 → mail token → SOAP/EWS）=====
 
-const MAIL_ENDPOINT = "http://mail-skill.jd.com/mail/api/clawmail/mailpost";
+
 let cachedMailToken = null;
 
 async function gatewayForm(functionId, meToken, payload) {
@@ -276,7 +436,7 @@ async function getMailToken(meToken) {
   // step2: RSA encrypt
   let pem = pkData.publicKeyPem.trim();
   if (!pem.startsWith("-----")) pem = `-----BEGIN PUBLIC KEY-----\n${pem}\n-----END PUBLIC KEY-----`;
-  const plaintext = JSON.stringify({ p: pkData.pin, t: String(Date.now()), c: crypto.randomUUID().replaceAll("-", ""), s: "JoyMail_Mac" });
+  const plaintext = JSON.stringify({ p: pkData.pin, t: String(Date.now()), c: crypto.randomUUID().replaceAll("-", ""), s: process.env.JOYME_MAIL_SOURCE || "Client" });
   const encrypted = crypto.publicEncrypt({ key: pem, padding: crypto.constants.RSA_PKCS1_PADDING }, Buffer.from(plaintext)).toString("base64");
   // step3: login
   const login = await gatewayForm("joymail.authentication.login", meToken, { data: encodeURIComponent(encrypted) });
@@ -354,12 +514,12 @@ async function mailDetail(meToken, itemId) {
   return soapMail(wrapSoap(body), token);
 }
 
-// ===== 京ME 收消息摘要（im-agent.jd.com，复刻 joychat message_summary action）=====
+// ===== 京ME 收消息摘要（消息摘要服务 message_summary action）=====
 
 async function messageSummary(meToken, { startTime, endTime, pin, groupId, unread } = {}) {
   const headers = {
     "Content-Type": "application/json",
-    Cookie: `me_token=${meToken}`, "x-team-id": "00046419",
+    Cookie: `me_token=${meToken}`, "x-team-id": TEAM_ID,
     "x-im-app": "ee", "x-im-id": crypto.randomUUID(),
     "x-im-clientType": "gw", "x-im-funcVer": "1.2.8",
     "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
@@ -370,7 +530,7 @@ async function messageSummary(meToken, { startTime, endTime, pin, groupId, unrea
   if (pin) payload.toPin = pin;
   if (groupId) payload.sessionId = groupId;
   if (unread) payload.unread = unread;
-  const res = await rfetch("https://im-agent.jd.com/summary/summaryMsgForSkill", {
+  const res = await rfetch(`${process.env.JOYME_MSG_SUMMARY_URL || requireEnv("JOYME_MSG_SUMMARY_URL", process.env.JOYME_MSG_SUMMARY_URL)}`, {
     method: "POST", headers, body: JSON.stringify(payload),
     signal: AbortSignal.timeout(120000),
   });
@@ -413,6 +573,101 @@ async function main() {
     const token = await getMeToken();
     const out = await sendImMessage(token, { gid: bodyArg, content: text });
     console.log(out); return;
+  }
+
+  if (cmd === "--send-image") {
+    // 用法: --send-image <pin> <本地图片路径>   /   --send-image --group <gid> <路径>
+    const isGroup = bodyArg === "--group";
+    const gid = isGroup ? arg4 : null;
+    const imagePath = isGroup ? process.argv[5] : arg4;
+    if (!imagePath) { console.error("用法: --send-image <pin> <图片路径> / --send-image --group <gid> <路径>"); process.exit(1); }
+    const token = await getMeToken();
+    const out = await sendImImage(token, isGroup ? { gid, imagePath } : { to: { app: "ee", pin: bodyArg }, imagePath });
+    console.log(`✓ 图片已发送: ${out.upload.path} (${out.upload.width}x${out.upload.height}, ${(out.upload.size / 1024).toFixed(1)}KB)`);
+    return;
+  }
+
+  if (cmd === "--upload-image") {
+    // 用法: --upload-image <本地图片路径>   仅上传取 URL，不发送
+    const token = await getMeToken();
+    const up = await uploadImageFile(token, bodyArg);
+    console.log(JSON.stringify(up, null, 2));
+    return;
+  }
+
+  if (cmd === "--upload-file") {
+    // 用法: --upload-file <本地文件路径>   分片上传（>10MB 自动分片）
+    const token = await getMeToken();
+    const up = await chunkUploadFile(token, bodyArg);
+    console.log(JSON.stringify(up, null, 2));
+    return;
+  }
+
+  if (cmd === "--create-group") {
+    // 用法: --create-group <组名> <pin1,pin2,...>
+    const members = (arg4 || "").split(",").map((s) => s.trim()).filter(Boolean);
+    if (!members.length) { console.error("用法: --create-group <组名> <pin1,pin2,...>"); process.exit(1); }
+    const token = await getMeToken();
+    const out = await imGateway(token, "/gateway/group/createGroup", { groupName: bodyArg, groupMembers: members });
+    console.log(JSON.stringify(out, null, 2));
+    return;
+  }
+
+  if (cmd === "--group-members") {
+    // 用法: --group-members <gid>
+    const token = await getMeToken();
+    const out = await imGateway(token, "/gateway/group/groupSkillRosterGet", { gid: bodyArg, ver: 0 });
+    const items = out?.data?.data?.items || [];
+    if (!items.length) console.log(JSON.stringify(out, null, 2).slice(0, 500));
+    else items.forEach((it) => console.log(`${it.user?.pin || "?"}  ${it.user?.name || ""}  ${it.roleType || ""}`));
+    return;
+  }
+
+  if (cmd === "--group-announcement") {
+    // 用法: --group-announcement <gid> <公告内容>
+    const token = await getMeToken();
+    const out = await imGateway(token, "/gateway/group/updateGroupNotice", { groupId: bodyArg, notice: arg4 });
+    console.log(JSON.stringify(out, null, 2).slice(0, 500));
+    return;
+  }
+
+  if (cmd === "--later-list") {
+    // 稍后处理列表
+    const token = await getMeToken();
+    const out = await imGateway(token, "/gateway/tag/getLaterList", { labelId: "1010" });
+    console.log(JSON.stringify(out, null, 2).slice(0, 2000));
+    return;
+  }
+
+  if (cmd === "--create-task") {
+    // 用法: --create-task '<JSON>'  标题/备注/起止时间戳/执行人(需先 search 确认)
+    const token = await getMeToken();
+    const p = JSON.parse(bodyArg);
+    const data = { title: p.title };
+    if (p.remark) data.remark = p.remark;
+    if (p.parentTaskId) { data.parentTaskId = p.parentTaskId; data.isChild = true; data.taskListType = 7; }
+    if (p.owners) data.owners = p.owners;
+    if (p.startTime) data.startTime = p.startTime;
+    if (p.endTime) data.endTime = p.endTime;
+    if (p.remindStr) data.remindStr = p.remindStr;
+    const out = await colorForm("work.task.clientTaskSave.v2", token, data);
+    console.log(out);
+    return;
+  }
+
+  if (cmd === "--create-appointment") {
+    // 用法: --create-appointment '<JSON>'  subject/startDate/endDate/attendees[]/location/description/needVideoMeeting/reminderMinutesStr
+    const token = await getMeToken();
+    const p = JSON.parse(bodyArg);
+    const out = await colorForm("joyday.appointment.addAppointmentClaw", token, {
+      subject: p.subject, startDate: p.startDate, endDate: p.endDate,
+      attendees: p.attendees || [], needVideoMeeting: p.needVideoMeeting !== false,
+      reminderMinutesStr: p.reminderMinutesStr || "-5",
+      ...(p.location ? { location: p.location } : {}),
+      ...(p.description ? { description: p.description } : {}),
+    });
+    console.log(out);
+    return;
   }
 
   if (cmd === "--mail") {

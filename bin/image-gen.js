@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 京东 AIGC 图像生成 — 迁移自 joyclaw 海报能力
+// AIGC 图像生成（文生图/图生图），零依赖
 // 用法:
 //   node image-gen.js "<prompt>"                        # 文生图
 //   node image-gen.js --edit "<原图URL>" "<编辑提示词>"   # 图生图

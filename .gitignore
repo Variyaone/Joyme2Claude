@@ -3,3 +3,6 @@ node_modules/
 *.log
 outputs/
 .env
+.env.local
+*.env.local
+test.png

@@ -4,8 +4,8 @@
  *
  * 复刻 openclaw jd-jmechat 扩展的 Desk 协议：
  *   1. 认证：joyme-direct.js 同链（encrypt → HiOffice 8988 → getWebToken → me_token）
- *   2. 连接：socket.io-client → wss://joyme-socket.jd.com（path /collabwsgateway/joyspace）
- *   3. 握手：query 带 token `1##<me_token>##00046419####zh_CN`，connect 后发 desk_user
+ *   2. 连接：socket.io-client → wss://<your-ws-host>（WebSocket 网关）
+ *   3. 握手：query 带 token `1##<me_token>##<team_id>####zh_CN`，connect 后发 desk_user
  *   4. 发送：emit("message", { channelId, eventName: "desk_agent_msg_res", message: { content, type: "text" } })
  *
  * 用法:
@@ -17,9 +17,13 @@
 const { io } = require("socket.io-client");
 const { spawnSync } = require("child_process");
 
-const DESK_WS_BASE = "wss://joyme-socket.jd.com";
-const DESK_WS_PATH = "/collabwsgateway/joyspace";
-const DEVICE_ID = "b1d5b27921a4e715573ce465e0d94439hioh"; // 沿用 joyclaw 配对身份，消息列表显示为 joyclaw 机器人
+function requireEnv(name, value) {
+  if (!value || value.includes("<")) { console.error(`缺少环境变量 ${name}`); process.exit(2); }
+  return value;
+}
+const DESK_WS_BASE = process.env.JOYME_WS_BASE || requireEnv("JOYME_WS_BASE", process.env.JOYME_WS_BASE);
+const DESK_WS_PATH = "/collabwsgateway/generic";
+const DEVICE_ID = process.env.JOYME_BOT_DEVICE_ID || requireEnv("JOYME_BOT_DEVICE_ID", process.env.JOYME_BOT_DEVICE_ID); // 机器人配对身份
 const HERE = __dirname;
 
 function die(msg) { console.error(msg); process.exit(1); }
@@ -60,25 +64,25 @@ async function main() {
 
   const token = getMeToken();
   const channelId = `session-${Date.now()}-${require("crypto").randomBytes(4).toString("hex")}`;
-  const tokenValue = `1##${token}##00046419####zh_CN`;
+  const tokenValue = `1##${token}##${process.env.JOYME_TEAM_ID || ""}####zh_CN`;
 
   const socket = io(DESK_WS_BASE, {
     path: DESK_WS_PATH,
     transports: ["websocket"],
     query: {
-      appId: "joydesk",
+      appId: process.env.JOYME_APPID || "im",
       channelId,
       token: tokenValue,
       EIO: "4",
       transport: "websocket",
     },
-    extraHeaders: { Origin: "https://joyme.jd.com" },
+    extraHeaders: { Origin: process.env.JOYME_ORIGIN || "https://example.com" },
     forceNew: true,
     reconnection: false,
     timeout: 15000,
   });
 
-  const timeout = setTimeout(() => { socket.disconnect(); die("连接 wss://joyme-socket.jd.com 超时"); }, 25000);
+  const timeout = setTimeout(() => { socket.disconnect(); die("连接 WebSocket 网关超时"); }, 25000);
 
   socket.on("connect", () => {
     clearTimeout(timeout);

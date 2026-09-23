@@ -1,143 +1,239 @@
-# joyme2claude
+# Joyme2Claude
 
-Let [Claude Code](https://claude.com/claude-code) use **all** of your JoyMe (京ME) capabilities — messages, chat history, todos, calendar, meeting minutes, docs, email, org search, and image generation — directly from a pure Windows environment. No WSL, no openclaw, no stored credentials.
+[中文](#中文) | [English](#english)
 
-```
-Claude ──► bin/joyme.js ──► 京ME desktop (local auth) ──► JoyMe APIs
-```
+---
+
+<a name="english"></a>
+
+Give Claude (or any CLI agent) direct access to a JD-style enterprise IM ("JingMe"-like desktop client) — messages, mail, todos, calendar, meeting minutes, docs, contacts, file/image upload, and AI image generation — through small, dependency-free Node.js scripts that talk to the same endpoints the official desktop client uses.
+
+**This repository is for educational and research purposes only.** See [Disclaimer](#disclaimer).
+
+## What it can do
+
+| Category | Capability | Tool |
+|---|---|---|
+| Messaging | Send text / image messages to a person or a group | `joyme.js --send`, `--send-image` |
+| Messaging | Server-side AI summary of recent chats | `joyme.js --msg-summary` |
+| Messaging | Read raw chat history from the desktop client's local logs (~7 days) | `jm-forensics.js --im-log` |
+| Messaging | Extract bot-pushed report-card screenshots (signed OSS URLs) + metadata | `jm-forensics.js --card-images`, `--card-meta` |
+| Mail | Search inbox / sent / custom folders, read a message, look up recipients | `mail-full.js search / detail / lookup-recipient` |
+| Mail | **Send / reply / forward, with attachments** | `mail-full.js send / reply / forward` |
+| Mail | Batch mark read/unread, flag, categorize, move, delete, folder management | `mail-full.js batch-*`, `folders`, `create-folder` |
+| Todos | Search / create todos | `joyme.js meetingAgent.color.taskCommonSearch`, `--create-task` |
+| Calendar | Search / create appointments | `joyme.js joyday.appointment.*`, `--create-appointment` |
+| Minutes | Search meeting minutes, get transcripts (ASR), details | `joyme.js minutes.*` |
+| Docs | Full-text search and read JoySpace documents | `joyme.js --joyspace` |
+| Contacts | Search employees / groups | `joyme.js jdme.search.search` |
+| Files | Upload images (direct) and large files (chunked, resumable >10MB) | `joyme.js --upload-image`, `--upload-file` |
+| Files | Send an image in a chat (auto-upload + send) | `joyme.js --send-image` |
+| AI | Text-to-image and image-to-image generation | `image-gen.js` |
+| Push | Optional bot push channel | `bot/joyme-bot.js` |
+
+> Group-admin operations (`--create-group`, `--group-members`, `--group-announcement`) are included but gated by server-side permission checks — they may return "no permission" depending on your account. `--later-list` (snoozed messages) works.
 
 ## How it works
 
-The only prerequisite: **the 京ME desktop client is running and logged in on your Windows machine.** Everything else is bootstrapped per-run:
+The desktop client exposes a local bridge (port 8988). Every script run performs a fresh, stateless auth handshake through that bridge — no passwords, no API keys, no stored credentials in this repo:
 
-1. `desk.agent.auth.encrypt` (Color gateway) → encrypted payload
-2. Local 京ME desktop HiOffice service (`127.0.0.1:8988`) → appToken
-3. `desk.agent.auth.getWebToken` → `me_token` (~24h valid, never cached to disk)
-4. JoySpace/JoyMail exchange further tokens on demand (SSO / RSA login)
+```
+Color gateway encrypt → local HiOffice bridge → me_token → (mail: RSA login → JWT) → API call
+```
 
-No credentials are ever stored. If the desktop client is closed, every call fails fast with a clear error.
+The only prerequisite is that the desktop client is running on the machine.
 
-## Setup
+## Quick start
 
-Requires Node.js ≥ 18 (uses built-in `fetch`, `crypto`, `URLSearchParams`).
+This repository contains **no real internal addresses or keys** — every gateway endpoint, app identifier and key is read from environment variables at runtime. Set them once in your shell profile (see the full list in the *Environment variables* section below), then:
 
 ```bash
-git clone https://github.com/Variyaone/joyme2claude.git
+N=node   # any Node.js ≥ 18 (uses built-in fetch/FormData)
+
+# Who am I
+$N bin/joyme.js login.getUserProfile '{}'
+
+# Send a message / an image
+$N bin/joyme.js --send <pin> "hello"
+$N bin/joyme.js --send-image <pin> chart.png
+
+# Mail: search, read, send with attachment
+$N bin/mail-full.js search --folder inbox --unread --limit 20
+$N bin/mail-full.js detail --item-id <id>
+$N bin/mail-full.js send --to a@x.com --subject "Report" --body "See attached" --attachments report.xlsx
+
+# Todos & calendar
+$N bin/joyme.js meetingAgent.color.taskCommonSearch '{"keyword":"","startTime":...,"endTime":...}'
+$N bin/joyme.js --create-task '{"title":"Review PR","endTime":"2026-09-30"}'
+
+# AI image generation
+$N bin/image-gen.js "a bar chart of weekly fulfilment rates"
 ```
 
-Optional — the bot push channel needs one dependency:
+More usage details (including all flags) are in the header comment of each script.
 
-```bash
-cd joyme2claude/bot && npm install
-```
+## Environment variables
 
-Then point Claude at it via your project's `CLAUDE.md`:
+All network endpoints and identifiers are runtime configuration — the repo ships only placeholders. Sourced from your own environment (e.g. `~/.bashrc` or a local `.env.local`, which is git-ignored):
 
-```markdown
-N=node                       # or path to a local node.exe
-$N bin/joyme.js <functionId> '<bodyJSON>'
-```
-
-## Usage — one CLI, all capabilities
-
-```bash
-N=node
-J=bin/joyme.js
-
-# ── Identity & org search ─────────────────────────────────────
-$N $J login.getUserProfile '{}'                     # who am I
-$N $J jdme.search.search '{"keyword":"a name","from":"joywork","includeIndexSet":["*"],"origin":["CONTACT"],"includeSaaS":true,"start":0,"size":50}'  # find people/groups
-
-# ── Chat history / message summaries (read) ───────────────────
-$N $J --msg-summary                               # smart summary of last 2 days
-$N $J --msg-summary 7                             # last N days
-$N $J --msg-summary --pin <pin>                   # conversation with one person
-$N $J --msg-summary --group <gid>                 # one group's conversation
-
-# ── Send messages (write) ────────────────────────────────────
-$N $J --send <pin> '<content>'                    # DM a person (confirm first!)
-$N $J --send-group <gid> '<content>'               # send to a group (confirm first!)
-
-# ── Todos (joywork) ──────────────────────────────────────────
-$N $J meetingAgent.color.taskCommonSearch '{"title":"","createTime":{"start":"2026-09-01 00:00:00","end":"2026-09-30 23:59:59"}}'
-$N $J work.task.clientTaskSave.v2 '<see task body below>'
-
-# ── Calendar (joyday) ────────────────────────────────────────
-$N $J joyday.appointment.searchScheduleAssist '{"startTime":<ms>,"endTime":<ms>,"searchMode":"part"}'
-$N $J joyday.appointment.addAppointmentClaw '<bodyJSON>'
-
-# ── Meeting minutes ──────────────────────────────────────────
-$N $J minutes.search '{"keyword":"","startTime":<ms>,"endTime":<ms>}'
-$N $J minutes.detail '{"minutesId":"..."}'
-$N $J minutes.asr '<bodyJSON>'                     # ASR transcript
-
-# ── Docs (JoySpace) ──────────────────────────────────────────
-$N $J --joyspace /v2/search/global '{"search":"keyword","classiFication":[1],"timeRange":2,"scene":"global","start":0,"length":20}'
-$N $J --joyspace /v1/pages/markdown-content '<bodyJSON>'
-
-# ── Email (EWS via joymail) ──────────────────────────────────
-$N $J --mail [YYYY-MM-DD] [YYYY-MM-DD]            # list, default last 2 days
-$N $J --mail-detail <itemId>                       # read one email's body
-
-# ── Any other Color-gateway API ─────────────────────────────
-$N $J <functionId> '<bodyJSON>'
-
-# ── Image generation ─────────────────────────────────────────
-$N bin/image-gen.js "<prompt>"                     # text→image, prints imageUrl
-$N bin/image-gen.js --save "<prompt>" out/          # also downloads the PNG
-$N bin/image-gen.js --edit "<imageURL>" "<prompt>"  # image→image
-
-# ── Local forensics (raw chat log + card images, no API) ────
-$N bin/jm-forensics.js --im-log [keyword] [--all]   # raw message text from desktop IM logs (~7 days)
-$N bin/jm-forensics.js --im-log --json              # machine-readable output
-$N bin/jm-forensics.js --card-images [--report <ID>] # card/report screenshot URLs (signed OSS links)
-$N bin/jm-forensics.js --card-images --report <ID> --download dir/   # download the PNGs
-$N bin/jm-forensics.js --card-meta [keyword]        # decoded card metadata (report ID / window date)
-
-# ── Bot push channel (optional, needs bot/ npm install) ─────
-$N bot/joyme-bot.js "<content>"                     # push via joyclaw bot session
-```
-
-## Rules for the AI agent
-
-These conventions live in the code's home project and are recommended for any Claude (or other agent) using this toolset:
-
-1. **Search before you send.** Before messaging a colleague, run `jdme.search.search` to confirm the recipient. If multiple matches come back, list them and let the human pick.
-2. **Confirm before any write.** Sending messages, creating todos, creating calendar events — always show the intended action to the human first.
-3. **Shanghai timezone.** Calendar timestamps are milliseconds computed in `Asia/Shanghai`.
-4. **Read freely, write carefully.** All read paths (history, mail, docs, minutes, search) are safe to run autonomously; writes are always human-gated by the rules above.
-
-## Two ways to read chat history
-
-1. **`--msg-summary`** (API): server-side AI-generated summaries. Good for "what happened lately", loses exact wording.
-2. **`bin/jm-forensics.js --im-log`** (local): raw message text from the desktop client's own log files (`%LOCALAPPDATA%\JoyMe\<pin>\IM\main.log*`, ~7 days rolling). Exact wording, per-message dedup, no API call, works offline.
-
-For **bot-pushed report cards** (dashboard screenshots): the images are signed OSS URLs cached by the desktop renderer. `--card-images` extracts them from the cache; `--card-images --report <ID> --download <dir>` fetches the PNGs; `--card-meta` decodes card metadata (report ID, window date) from IM logs. See `bin/jm-forensics.js` header comments for the on-disk locations and quirks.
-
-## Gotchas
-
-- `me_token` is fetched fresh every run (~2s overhead). Use `--get-token` / `--get-sso` if you want to cache it in a longer-lived process.
-- Git Bash mangles `/v2/...` paths into `C:\...` — the `--joyspace` handler already repairs this, but be aware when scripting.
-- Message send uses an AES-192-CBC encrypted IM channel (`imCommon.api`); the key is fetched dynamically per run.
-- Email goes through joymail RSA login + EWS SOAP; responses are raw SOAP XML (the `--mail` list mode pretty-prints them for you).
-- `--msg-summary` calls `im-agent.jd.com/summary/summaryMsgForSkill` — it can take up to 2 minutes for long ranges.
-- Image generation hits an internal AIGC endpoint that requires the office network (no auth, but not reachable from home VPN in some cases).
+| Variable | Purpose |
+|---|---|
+| `JOYME_API_BASE` | main API gateway origin |
+| `JOYME_JOYSPACE_BASE` | docs API origin |
+| `JOYME_FILE_BASE` | file upload host |
+| `JOYME_MAIL_ENDPOINT` | mail SOAP/EWS proxy endpoint |
+| `JOYME_ERP_QUERY_URL` | employee lookup API |
+| `JOYME_SSO_HOST` / `JOYME_SSO_NAME` / `JOYME_SSO_COOKIE` | SSO exchange host, service name, cookie name |
+| `JOYME_HIO_URL` / `JOYME_HIO_FROM` | local desktop bridge URL and app code |
+| `JOYME_APPID` / `JOYME_APPNAME` / `JOYME_TENANT` / `JOYME_TEAM_ID` | gateway app identifiers |
+| `JOYME_SSO_APP_KEY` | SSO app key |
+| `JOYME_APP_TODO` / `JOYME_APP_CAL` / `JOYME_APP_MINUTES` | routing appids for todo / calendar / minutes APIs |
+| `JOYME_MAIL_APPID` / `JOYME_MAIL_FN_PUBKEY` / `JOYME_MAIL_FN_LOGIN` / `JOYME_MAIL_SOURCE` | mail auth app id & function names |
+| `JOYME_BIZ_FLAG` / `JOYME_MSG_SUMMARY_URL` | message business flag; chat-summary service URL |
+| `ME_TOKEN` | optional: reuse an existing token instead of the bridge handshake |
 
 ## Repository layout
 
 ```
-bin/joyme.js         all JoyMe capabilities, single-file CLI, zero dependencies
+bin/joyme.js         core CLI: messaging, todos, calendar, minutes, docs, contacts, upload (zero deps)
+bin/mail-full.js     full-featured mail client: read + write + batch management (zero deps)
 bin/image-gen.js     AIGC image generation (text→image, image→image, download)
-bin/jm-forensics.js  local forensics: raw IM logs, card screenshot URLs, card metadata (zero dependencies)
+bin/jm-forensics.js  local forensics: raw IM logs, card screenshot URLs, card metadata (zero deps)
 bot/joyme-bot.js     optional bot push channel (socket.io, needs npm install)
 ```
 
-## Security & privacy
+## Gotchas
 
-- This repo contains **code only** — no tokens, no PINs, no message content, no company documents. Never commit runtime output that contains real chat/mail content.
-- All authentication is derived at runtime from the locally running 京ME desktop session. Nothing to leak, nothing to rotate.
-- Intended for use with your own company account within your organization's policies.
+- **Write operations need confirmation.** Always confirm with the user before sending messages/mail, creating todos or appointments. For recipients, search first and let the user pick when there are multiple matches.
+- Calendar timestamps are **Shanghai-timezone milliseconds**.
+- The mail EWS gateway is occasionally flaky (`ews soap timeout`) — just retry.
+- Card content blobs in IM logs are a semi-compressed format; the scripts lenient-decode them and regex out the ASCII fields rather than fully decompressing.
+- Chat logs roll over (~7 days); older files are scanned automatically.
 
-## License
+## Disclaimer
 
-MIT
+This project is a personal technical study of desktop-client-to-API communication patterns. It is published **for learning and research purposes only**:
+
+- **No** company proprietary code, internal API documentation, credentials, tokens, or secrets are included. Everything here is original, from-scratch Node.js.
+- **No** actual internal API endpoint addresses, app keys, or identifiers are present in this repository — check `bin/` to verify; anything sensitive is read from the environment at runtime or replaced with placeholders.
+- The scripts only work on a machine where the user has already legitimately logged into the official desktop client, and act strictly as that user.
+- Misuse (scraping confidential data, spamming, evading corporate policy) is prohibited. The author is not responsible for any consequences of use. If you are the operator of any related service and object to this repository, please open an issue and it will be handled promptly.
+
+---
+
+<a name="中文"></a>
+
+# 中文版
+
+让 Claude（或任何 CLI 智能体）直接使用京Me 类企业 IM 桌面端的全部能力——消息、邮件、待办、日程、会议纪要、文档、员工搜索、文件/图片上传、AI 画图——通过几个零依赖的 Node.js 小脚本，走桌面端官方客户端同样的接口。
+
+**本仓库仅供学习研究用途。** 见[免责声明](#免责声明)。
+
+## 能做什么
+
+| 分类 | 能力 | 工具 |
+|---|---|---|
+| 消息 | 给个人/群发文字、发图片 | `joyme.js --send`、`--send-image` |
+| 消息 | 近期聊天记录的服务端 AI 摘要 | `joyme.js --msg-summary` |
+| 消息 | 从桌面端本地日志读聊天记录原文（约7天） | `jm-forensics.js --im-log` |
+| 消息 | 提取机器人推送的报表卡片截图（OSS 签名直链）+ 元信息 | `jm-forensics.js --card-images`、`--card-meta` |
+| 邮件 | 搜收件箱/已发送/自定义文件夹、读正文、查收件人 | `mail-full.js search / detail / lookup-recipient` |
+| 邮件 | **发信/回复/转发，支持附件** | `mail-full.js send / reply / forward` |
+| 邮件 | 批量已读/未读、旗标、分类、移动、删除、文件夹管理 | `mail-full.js batch-*`、`folders`、`create-folder` |
+| 待办 | 搜待办、建待办 | `joyme.js meetingAgent.color.taskCommonSearch`、`--create-task` |
+| 日程 | 搜日程、建日程 | `joyme.js joyday.appointment.*`、`--create-appointment` |
+| 纪要 | 搜会议纪要、取转写(ASR)、详情 | `joyme.js minutes.*` |
+| 文档 | JoySpace 文档全文搜索与读取 | `joyme.js --joyspace` |
+| 联系人 | 搜员工/群 | `joyme.js jdme.search.search` |
+| 文件 | 图片直传、大文件分片断点续传（>10MB 自动分片） | `joyme.js --upload-image`、`--upload-file` |
+| 文件 | 聊天里发图（自动上传+发送） | `joyme.js --send-image` |
+| AI | 文生图、图生图 | `image-gen.js` |
+| 推送 | 可选的机器人推送通道 | `bot/joyme-bot.js` |
+
+> 群管理类操作（`--create-group`、`--group-members`、`--group-announcement`）已实现，但受服务端权限校验限制，部分账号会返回"无权限"。`--later-list`（稍后处理列表）可用。
+
+## 工作原理
+
+桌面端在本机暴露一个桥接端口（8988）。每次运行脚本都通过它做一次全新的、无状态的认证握手——仓库里不含任何密码、API key、存储的凭证：
+
+```
+Color 网关加密 → 本地 HiOffice 桥 → me_token →（邮件：RSA 登录 → JWT）→ 调接口
+```
+
+唯一前提是桌面端在本机运行中。
+
+## 快速开始
+
+本仓库**不含任何真实内部地址或密钥**——所有网关地址、应用标识、密钥均运行时从环境变量读取。先在你的 shell 配置里设置好（清单见下方「环境变量」一节，或用本地 `.env.local`，已被 git 忽略），然后：
+
+```bash
+N=node   # 任意 Node.js ≥ 18（用内置 fetch/FormData）
+
+# 我是谁
+$N bin/joyme.js login.getUserProfile '{}'
+
+# 发消息 / 发图
+$N bin/joyme.js --send <pin> "你好"
+$N bin/joyme.js --send-image <pin> chart.png
+
+# 邮件：搜索、读、带附件发信
+$N bin/mail-full.js search --folder inbox --unread --limit 20
+$N bin/mail-full.js detail --item-id <id>
+$N bin/mail-full.js send --to a@x.com --subject "周报" --body "见附件" --attachments 周报.xlsx
+
+# 待办与日程
+$N bin/joyme.js meetingAgent.color.taskCommonSearch '{"keyword":"","startTime":...,"endTime":...}'
+$N bin/joyme.js --create-task '{"title":"审PR","endTime":"2026-09-30"}'
+
+# AI 画图
+$N bin/image-gen.js "周履约率柱状图"
+```
+
+更多用法（含全部参数）见各脚本文件头注释。
+
+## 环境变量
+
+所有网络地址与标识符都是运行时配置——仓库里只有占位符。从你自己的环境读取（如 `~/.bashrc` 或本地 `.env.local`，已被 git 忽略）：
+
+| 变量 | 用途 |
+|---|---|
+| `JOYME_API_BASE` | 主 API 网关地址 |
+| `JOYME_JOYSPACE_BASE` | 文档 API 地址 |
+| `JOYME_FILE_BASE` | 文件上传主机 |
+| `JOYME_MAIL_ENDPOINT` | 邮件 SOAP/EWS 代理端点 |
+| `JOYME_ERP_QUERY_URL` | 员工查询 API |
+| `JOYME_SSO_HOST` / `JOYME_SSO_NAME` / `JOYME_SSO_COOKIE` | SSO 换票主机、服务名、cookie 名 |
+| `JOYME_HIO_URL` / `JOYME_HIO_FROM` | 本地桌面端桥接地址与 app code |
+| `JOYME_APPID` / `JOYME_APPNAME` / `JOYME_TENANT` / `JOYME_TEAM_ID` | 网关应用标识 |
+| `JOYME_SSO_APP_KEY` | SSO app key |
+| `JOYME_APP_TODO` / `JOYME_APP_CAL` / `JOYME_APP_MINUTES` | 待办/日程/纪要 API 的路由 appid |
+| `JOYME_MAIL_APPID` / `JOYME_MAIL_FN_PUBKEY` / `JOYME_MAIL_FN_LOGIN` / `JOYME_MAIL_SOURCE` | 邮件认证 app id 与接口名 |
+| `JOYME_BIZ_FLAG` / `JOYME_MSG_SUMMARY_URL` | 消息 business flag；聊天摘要服务地址 |
+| `ME_TOKEN` | 可选：复用已有 token，跳过桥接握手 |
+
+## 目录结构
+
+```
+bin/joyme.js         核心 CLI：消息、待办、日程、纪要、文档、联系人、上传（零依赖）
+bin/mail-full.js     邮件全家桶：读 + 写 + 批量管理（零依赖）
+bin/image-gen.js     AIGC 画图（文生图、图生图、下载）
+bin/jm-forensics.js  本地取证：IM 日志原文、卡片截图 URL、卡片元信息（零依赖）
+bot/joyme-bot.js     可选机器人推送通道（socket.io，需 npm install）
+```
+
+## 注意事项
+
+- **写操作先确认。** 发消息/邮件、建待办/日程前务必向用户确认；收件人先搜索，多条匹配让用户选。
+- 日程时间戳是**上海时区毫秒**。
+- 邮件 EWS 网关偶发超时（`ews soap timeout`），重试即可。
+- IM 日志里的卡片正文是半压缩格式，脚本用容错解码+正则提取 ASCII 字段，不做完整解压。
+- 聊天日志约 7 天滚动，旧文件会自动扫描。
+
+## 免责声明
+
+本项目是对"桌面客户端 ↔ 服务端 API"通信方式的技术研究，**仅供学习交流使用**：
+
+- 仓库内**不含**任何公司专有代码、内部 API 文档、凭证、token 或机密内容；所有代码均为从零编写的原创 Node.js。
+- 仓库内**不含**任何真实内部接口地址、app key 或标识符——可自行检查 `bin/` 目录核实；敏感值均在运行时从环境读取或以占位符代替。
+- 脚本只在用户已合法登录官方桌面端的机器上可用，且始终以该用户本人的身份执行操作。
+- 禁止用于爬取机密数据、群发骚扰、绕过公司策略等用途。使用产生的任何后果与作者无关。若您是相关服务运营方且对本仓库有异议，请提 issue，将及时处理。
