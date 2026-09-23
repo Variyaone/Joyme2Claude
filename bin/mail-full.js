@@ -299,6 +299,19 @@ async function replyMail({ itemId, body, all, quote, attachments }) {
     `<t:NewBodyContent BodyType="Text">${esc(body)}</t:NewBodyContent>` +
     `</t:${tag}></t:Items></m:CreateItem>`;
   let xml = await soap(wrapSoap(bodyXml));
+  if (respCode(xml) !== "NoError" && !attachments.length) {
+    // 智能回复(ReplyToItem)被网关 500 时，降级为普通回复：RE: 主题 + 发回原发件人（附原文引用）
+    const to = (detailXml.match(/<t:From><t:Mailbox>[\s\S]*?<t:EmailAddress>([^<]+)<\/t:EmailAddress>/) || [])[1] || "";
+    if (!to) { console.log(`回复失败: ${respCode(xml) || "网关错误"}`); return; }
+    const quoted = [
+      ``, `----- 原始邮件 -----`,
+      `主题: ${subject}`, `发件人: ${(detailXml.match(/<t:From><t:Mailbox>[\s\S]*?<t:Name>([^<]+)<\/t:Name>/) || [])[1] || ""} <${to}>`,
+      ``, ((detailXml.match(/<t:TextBody>([\s\S]*?)<\/t:TextBody>/) || [])[1] || "").slice(0, 2000),
+    ].join("\n");
+    await sendNew({ to, subject: /^(re|回复)[:：]/i.test(subject) ? subject : `RE: ${subject}`, body: body + (quote === false ? "" : quoted), attachments });
+    console.log(`✓ 已回复(降级普通发送): ${subject} → ${to}`);
+    return;
+  }
   if (!attachments.length) {
     console.log(respCode(xml) === "NoError" ? `✓ 已回复: ${subject}${all ? "（全部）" : ""}` : `回复失败: ${respCode(xml)}`);
     return;
