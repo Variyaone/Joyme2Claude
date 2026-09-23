@@ -87,6 +87,13 @@ $N bin/image-gen.js "<prompt>"                     # text→image, prints imageU
 $N bin/image-gen.js --save "<prompt>" out/          # also downloads the PNG
 $N bin/image-gen.js --edit "<imageURL>" "<prompt>"  # image→image
 
+# ── Local forensics (raw chat log + card images, no API) ────
+$N bin/jm-forensics.js --im-log [keyword] [--all]   # raw message text from desktop IM logs (~7 days)
+$N bin/jm-forensics.js --im-log --json              # machine-readable output
+$N bin/jm-forensics.js --card-images [--report <ID>] # card/report screenshot URLs (signed OSS links)
+$N bin/jm-forensics.js --card-images --report <ID> --download dir/   # download the PNGs
+$N bin/jm-forensics.js --card-meta [keyword]        # decoded card metadata (report ID / window date)
+
 # ── Bot push channel (optional, needs bot/ npm install) ─────
 $N bot/joyme-bot.js "<content>"                     # push via joyclaw bot session
 ```
@@ -100,6 +107,13 @@ These conventions live in the code's home project and are recommended for any Cl
 3. **Shanghai timezone.** Calendar timestamps are milliseconds computed in `Asia/Shanghai`.
 4. **Read freely, write carefully.** All read paths (history, mail, docs, minutes, search) are safe to run autonomously; writes are always human-gated by the rules above.
 
+## Two ways to read chat history
+
+1. **`--msg-summary`** (API): server-side AI-generated summaries. Good for "what happened lately", loses exact wording.
+2. **`bin/jm-forensics.js --im-log`** (local): raw message text from the desktop client's own log files (`%LOCALAPPDATA%\JoyMe\<pin>\IM\main.log*`, ~7 days rolling). Exact wording, per-message dedup, no API call, works offline.
+
+For **bot-pushed report cards** (dashboard screenshots): the images are signed OSS URLs cached by the desktop renderer. `--card-images` extracts them from the cache; `--card-images --report <ID> --download <dir>` fetches the PNGs; `--card-meta` decodes card metadata (report ID, window date) from IM logs. See `bin/jm-forensics.js` header comments for the on-disk locations and quirks.
+
 ## Gotchas
 
 - `me_token` is fetched fresh every run (~2s overhead). Use `--get-token` / `--get-sso` if you want to cache it in a longer-lived process.
@@ -112,9 +126,10 @@ These conventions live in the code's home project and are recommended for any Cl
 ## Repository layout
 
 ```
-bin/joyme.js       all JoyMe capabilities, single-file CLI, zero dependencies
-bin/image-gen.js   AIGC image generation (text→image, image→image, download)
-bot/joyme-bot.js   optional bot push channel (socket.io, needs npm install)
+bin/joyme.js         all JoyMe capabilities, single-file CLI, zero dependencies
+bin/image-gen.js     AIGC image generation (text→image, image→image, download)
+bin/jm-forensics.js  local forensics: raw IM logs, card screenshot URLs, card metadata (zero dependencies)
+bot/joyme-bot.js     optional bot push channel (socket.io, needs npm install)
 ```
 
 ## Security & privacy
