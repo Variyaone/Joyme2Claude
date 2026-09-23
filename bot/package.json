@@ -1,0 +1,11 @@
+{
+  "name": "joyme2claude-bot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "JoyMe bot push channel (Desk socket), optional component of joyme2claude",
+  "main": "joyme-bot.js",
+  "license": "MIT",
+  "dependencies": {
+    "socket.io-client": "^4.8.3"
+  }
+}

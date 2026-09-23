@@ -1,0 +1,5 @@
+# never commit runtime output or secrets
+node_modules/
+*.log
+outputs/
+.env
