@@ -45,7 +45,7 @@ The only prerequisite is that the desktop client is running on the machine.
 
 ## Quick start
 
-This repository contains **no real internal addresses or keys** — every gateway endpoint, app identifier and key is read from environment variables at runtime. Set them once in your shell profile (see the full list in the *Environment variables* section below), then:
+This repository contains **no real internal addresses or keys** — every gateway endpoint, app identifier and key is read from environment variables at runtime. Put them in a `.env.local` file next to `bin/` (git-ignored; the scripts auto-load it on startup, so no shell sourcing needed), then:
 
 ```bash
 N=node   # any Node.js ≥ 18 (uses built-in fetch/FormData)
@@ -62,9 +62,12 @@ $N bin/mail-full.js search --folder inbox --unread --limit 20
 $N bin/mail-full.js detail --item-id <id>
 $N bin/mail-full.js send --to a@x.com --subject "Report" --body "See attached" --attachments report.xlsx
 
-# Todos & calendar
-$N bin/joyme.js meetingAgent.color.taskCommonSearch '{"keyword":"","startTime":...,"endTime":...}'
+# Todos & calendar — NOTE the exact request formats (see Gotchas below)
+$N bin/joyme.js meetingAgent.color.taskCommonSearch '{"createTime":{"start":"2026-08-24 00:00:00","end":"2026-09-24 23:59:59"},"pageSize":20}'
 $N bin/joyme.js --create-task '{"title":"Review PR","endTime":"2026-09-30"}'
+
+# Employee search — full param shape, not just a keyword
+$N bin/joyme.js jdme.search.search '{"keyword":"<name>","from":"joywork","ext":"","includeIndexSet":["*"],"origin":["CONTACT"],"includeSaaS":true,"start":0,"size":10}'
 
 # AI image generation
 $N bin/image-gen.js "a bar chart of weekly fulfilment rates"
@@ -74,7 +77,7 @@ More usage details (including all flags) are in the header comment of each scrip
 
 ## Environment variables
 
-All network endpoints and identifiers are runtime configuration — the repo ships only placeholders. Sourced from your own environment (e.g. `~/.bashrc` or a local `.env.local`, which is git-ignored):
+All network endpoints and identifiers are runtime configuration — the repo ships only placeholders. Put them in a `.env.local` next to `bin/` (git-ignored): every script auto-loads it at startup, so a plain `node bin/joyme.js ...` just works. Values can also come from your shell environment, which takes precedence.
 
 | Variable | Purpose |
 |---|---|
@@ -107,6 +110,9 @@ bot/joyme-bot.js     optional bot push channel (socket.io, needs npm install)
 - **Write operations need confirmation.** Always confirm with the user before sending messages/mail, creating todos or appointments. For recipients, search first and let the user pick when there are multiple matches.
 - Calendar timestamps are **Shanghai-timezone milliseconds**.
 - The mail EWS gateway is occasionally flaky (`ews soap timeout`) — just retry.
+- **Mail reply uses a fallback path.** The gateway consistently rejects EWS smart-reply (`ReplyToItem`) with HTTP 500 while `ForwardItem` works, so on failure `mail-full.js reply` automatically degrades to a normal send: `RE:` subject, back to the original sender, with the quoted original text. Same deliverability, just not a threaded smart-reply.
+- **Todo search params are range objects, not timestamps**: `taskCommonSearch` takes `{"createTime":{"start":"YYYY-MM-DD HH:mm:ss","end":"..."},"pageSize":20}` — passing epoch millis returns a fastjson parse error.
+- **Employee search needs the full param shape**: `jdme.search.search` with only `{"keyword":...}` fails with "搜索类型不能空"; pass `{"keyword":...,"from":"joywork","origin":["CONTACT"],"includeIndexSet":["*"],"includeSaaS":true,"start":0,"size":10}`.
 - Card content blobs in IM logs are a semi-compressed format; the scripts lenient-decode them and regex out the ASCII fields rather than fully decompressing.
 - Chat logs roll over (~7 days); older files are scanned automatically.
 
@@ -164,7 +170,7 @@ Color 网关加密 → 本地 HiOffice 桥 → me_token →（邮件：RSA 登�
 
 ## 快速开始
 
-本仓库**不含任何真实内部地址或密钥**——所有网关地址、应用标识、密钥均运行时从环境变量读取。先在你的 shell 配置里设置好（清单见下方「环境变量」一节，或用本地 `.env.local`，已被 git 忽略），然后：
+本仓库**不含任何真实内部地址或密钥**——所有网关地址、应用标识、密钥均运行时从环境变量读取。把它们写进 `bin/` 旁边的 `.env.local`（已被 git 忽略；脚本启动时自动加载，无需 source），然后：
 
 ```bash
 N=node   # 任意 Node.js ≥ 18（用内置 fetch/FormData）
@@ -181,9 +187,12 @@ $N bin/mail-full.js search --folder inbox --unread --limit 20
 $N bin/mail-full.js detail --item-id <id>
 $N bin/mail-full.js send --to a@x.com --subject "周报" --body "见附件" --attachments 周报.xlsx
 
-# 待办与日程
-$N bin/joyme.js meetingAgent.color.taskCommonSearch '{"keyword":"","startTime":...,"endTime":...}'
+# 待办与日程——注意请求格式（见「注意事项」）
+$N bin/joyme.js meetingAgent.color.taskCommonSearch '{"createTime":{"start":"2026-08-24 00:00:00","end":"2026-09-24 23:59:59"},"pageSize":20}'
 $N bin/joyme.js --create-task '{"title":"审PR","endTime":"2026-09-30"}'
+
+# 员工搜索——要传完整参数，不是只传关键词
+$N bin/joyme.js jdme.search.search '{"keyword":"<姓名>","from":"joywork","ext":"","includeIndexSet":["*"],"origin":["CONTACT"],"includeSaaS":true,"start":0,"size":10}'
 
 # AI 画图
 $N bin/image-gen.js "周履约率柱状图"
@@ -193,7 +202,7 @@ $N bin/image-gen.js "周履约率柱状图"
 
 ## 环境变量
 
-所有网络地址与标识符都是运行时配置——仓库里只有占位符。从你自己的环境读取（如 `~/.bashrc` 或本地 `.env.local`，已被 git 忽略）：
+所有网络地址与标识符都是运行时配置——仓库里只有占位符。写进 `bin/` 旁边的 `.env.local`（已被 git 忽略）：每个脚本启动时自动加载，直接 `node bin/joyme.js ...` 即可。也可以放在 shell 环境里（优先级更高）。
 
 | 变量 | 用途 |
 |---|---|
@@ -226,6 +235,9 @@ bot/joyme-bot.js     可选机器人推送通道（socket.io，需 npm install�
 - **写操作先确认。** 发消息/邮件、建待办/日程前务必向用户确认；收件人先搜索，多条匹配让用户选。
 - 日程时间戳是**上海时区毫秒**。
 - 邮件 EWS 网关偶发超时（`ews soap timeout`），重试即可。
+- **邮件回复走降级路径。** 网关对 EWS 智能回复（`ReplyToItem`）稳定返回 500，而 `ForwardItem` 正常；因此 `mail-full.js reply` 失败时自动降级为普通发送：`RE:` 主题 + 发回原发件人 + 附原文引用。送达效果相同，只是不是线程化智能回复。
+- **待办搜索参数是时间范围对象，不是时间戳**：`taskCommonSearch` 要传 `{"createTime":{"start":"YYYY-MM-DD HH:mm:ss","end":"..."},"pageSize":20}`，传毫秒时间戳会报 fastjson 解析错误。
+- **员工搜索要传完整参数**：`jdme.search.search` 只传 `{"keyword":...}` 会报"搜索类型不能空"；要传 `{"keyword":...,"from":"joywork","origin":["CONTACT"],"includeIndexSet":["*"],"includeSaaS":true,"start":0,"size":10}`。
 - IM 日志里的卡片正文是半压缩格式，脚本用容错解码+正则提取 ASCII 字段，不做完整解压。
 - 聊天日志约 7 天滚动，旧文件会自动扫描。
 
