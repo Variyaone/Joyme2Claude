@@ -420,6 +420,41 @@ async function sendImImage(token, { to, gid, imagePath }) {
   return { sendResult: await res.text(), upload: up };
 }
 
+// ===== ME_AI 通道（me.ai.* functionId：JoySpace 创建文档 / AI表格 CRUD）=====
+// 协议：POST {BASE}/api?functionId=me.ai.joyspace&appid=ME_AI，form 编码，Cookie 带 me_token
+// 常用 action：
+//   创建文档  {action:"create_doc_routing", team_id:"root", folder_id:"root", title, content, [page_type]}
+//             page_type: 13=普通文档 18=sheet 21=AI表格；响应 data.pageId/link
+//   Office导入 {action:"joyspace.create_office_import_task", url, file_name, file_size, title, page_type, team_id, folder_id}
+//              → 返回 taskId，用 {action:"joyspace.query_office_import_task", task_id} 轮询
+//   AI表格   {action:"aitable.getSchema", page_id, sheet_id}                                    读表结构/字段
+//             {action:"aitable.listRecordsByPage", page_id, sheet_id, page_num, page_size, [page_token, filter, view_id]}
+//             {action:"aitable.createRecords", page_id, sheet_id, records:[{fields:{}}]}          单次≤50条
+//             {action:"aitable.updateRecords", page_id, sheet_id, records:[{id, fields}]}
+//             {action:"aitable.deleteRecords", page_id, sheet_id, record_ids:[]}
+//             {action:"aitable.getRecordById", page_id, sheet_id, record_id}
+//             filter 结构: {mode:"AND/OR", criteria:[{field, operator, values:[]}]}
+//             operator: Equals/NotEqu/Greater/GreaterEqu/Less/LessEqu/BeginWith/EndWith/Contains/NotContains/Intersected/Empty/NotEmpty
+//             注：getRecordById 返回的 record.fields 是 JSON 字符串，需二次 parse
+async function meAiCall(bodyObj) {
+  const token = await getMeToken();
+  const functionId = "me.ai.joyspace";
+  const form = new URLSearchParams({
+    appid: "ME_AI", body: JSON.stringify(bodyObj || {}),
+    functionId, loginType: "15", client: "web",
+  });
+  const res = await rfetch(`${BASE}/api?functionId=${functionId}&appid=ME_AI`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Cookie: `me_token=${token}`,
+      logintype: "15",
+    },
+    body: form.toString(),
+  });
+  return res.text();
+}
+
 // ===== JoyMail 邮件（me_token → RSA登录 → mail token → SOAP/EWS）=====
 
 
@@ -561,6 +596,11 @@ async function main() {
   if (!cmd) {
     console.error(Object.readFileSync ? "" : "用法见文件头注释");
     process.exit(1);
+  }
+  if (cmd === "--ai") {
+    // ME_AI 通道：joyme.js --ai '{"action":"create_doc_routing",...}'（action 清单见 meAiCall 注释）
+    const out = await meAiCall(JSON.parse(bodyArg || "{}"));
+    console.log(out); return;
   }
   if (cmd === "--joyspace") {
     // Git Bash 会把 /v2/... 转成 Windows 路径，还原 API path

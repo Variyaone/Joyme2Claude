@@ -25,6 +25,7 @@ Give Claude (or any CLI agent) direct access to a JD-style enterprise IM ("JingM
 | Calendar | Search / create appointments | `joyme.js joyday.appointment.*`, `--create-appointment` |
 | Minutes | Search meeting minutes, get transcripts (ASR), details | `joyme.js minutes.*` |
 | Docs | Full-text search and read JoySpace documents | `joyme.js --joyspace` |
+| Docs | **Create docs / AI tables, Office URL import, aitable record CRUD** | `joyme.js --ai` |
 | Contacts | Search employees / groups | `joyme.js jdme.search.search` |
 | Files | Upload images (direct) and large files (chunked, resumable >10MB) | `joyme.js --upload-image`, `--upload-file` |
 | Files | Send an image in a chat (auto-upload + send) | `joyme.js --send-image` |
@@ -69,6 +70,11 @@ $N bin/joyme.js --create-task '{"title":"Review PR","endTime":"2026-09-30"}'
 
 # Employee search — full param shape, not just a keyword
 $N bin/joyme.js jdme.search.search '{"keyword":"<name>","from":"joywork","ext":"","includeIndexSet":["*"],"origin":["CONTACT"],"includeSaaS":true,"start":0,"size":10}'
+
+# Create a JoySpace doc / AI table, read & write aitable records
+$N bin/joyme.js --ai '{"action":"create_doc_routing","team_id":"root","folder_id":"root","title":"Report","content":"# hi"}'
+$N bin/joyme.js --ai '{"action":"create_doc_routing","team_id":"root","folder_id":"root","title":"Tracker","page_type":21}'
+$N bin/joyme.js --ai '{"action":"aitable.createRecords","page_id":"<id>","sheet_id":"1","records":[{"fields":{"名称":"row1"}}]}'
 
 # AI image generation
 $N bin/image-gen.js "a bar chart of weekly fulfilment rates"
@@ -158,6 +164,7 @@ This project is a personal technical study of desktop-client-to-API communicatio
 | 日程 | 搜日程、建日程 | `joyme.js joyday.appointment.*`、`--create-appointment` |
 | 纪要 | 搜会议纪要、取转写(ASR)、详情 | `joyme.js minutes.*` |
 | 文档 | JoySpace 文档全文搜索与读取 | `joyme.js --joyspace` |
+| 文档 | **建文档/建AI表格、Office 导入、AI表格记录增删改查** | `joyme.js --ai` |
 | 联系人 | 搜员工/群 | `joyme.js jdme.search.search` |
 | 文件 | 图片直传、大文件分片断点续传（>10MB 自动分片） | `joyme.js --upload-image`、`--upload-file` |
 | 文件 | 聊天里发图（自动上传+发送） | `joyme.js --send-image` |
@@ -202,6 +209,11 @@ $N bin/joyme.js --create-task '{"title":"审PR","endTime":"2026-09-30"}'
 
 # 员工搜索——要传完整参数，不是只传关键词
 $N bin/joyme.js jdme.search.search '{"keyword":"<姓名>","from":"joywork","ext":"","includeIndexSet":["*"],"origin":["CONTACT"],"includeSaaS":true,"start":0,"size":10}'
+
+# 建 JoySpace 文档 / AI 表格，读写 AI 表格记录
+$N bin/joyme.js --ai '{"action":"create_doc_routing","team_id":"root","folder_id":"root","title":"周报","content":"# hi"}'
+$N bin/joyme.js --ai '{"action":"create_doc_routing","team_id":"root","folder_id":"root","title":"追踪表","page_type":21}'
+$N bin/joyme.js --ai '{"action":"aitable.createRecords","page_id":"<id>","sheet_id":"1","records":[{"fields":{"名称":"行1"}}]}'
 
 # AI 画图
 $N bin/image-gen.js "周履约率柱状图"
