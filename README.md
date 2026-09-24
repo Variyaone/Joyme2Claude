@@ -29,6 +29,7 @@ Give Claude (or any CLI agent) direct access to a JD-style enterprise IM ("JingM
 | Files | Upload images (direct) and large files (chunked, resumable >10MB) | `joyme.js --upload-image`, `--upload-file` |
 | Files | Send an image in a chat (auto-upload + send) | `joyme.js --send-image` |
 | AI | Text-to-image and image-to-image generation | `image-gen.js` |
+| AI | Text-to-video generation (async submit → poll → download, resumable) | `video-gen.js` |
 | Push | Optional bot push channel | `bot/joyme-bot.js` |
 
 > Group-admin operations (`--create-group`, `--group-members`, `--group-announcement`) are included but gated by server-side permission checks — they may return "no permission" depending on your account. `--later-list` (snoozed messages) works.
@@ -71,6 +72,10 @@ $N bin/joyme.js jdme.search.search '{"keyword":"<name>","from":"joywork","ext":"
 
 # AI image generation
 $N bin/image-gen.js "a bar chart of weekly fulfilment rates"
+
+# AI video generation (async, polls until done, then prints the video URL)
+$N bin/video-gen.js --prompt "misty forest lake at dawn" --duration 5 --mode 720p
+$N bin/video-gen.js --resume bin/video-tasks/video-task-<id>.json   # resume an interrupted wait
 ```
 
 More usage details (including all flags) are in the header comment of each script.
@@ -93,6 +98,8 @@ All network endpoints and identifiers are runtime configuration — the repo shi
 | `JOYME_APP_TODO` / `JOYME_APP_CAL` / `JOYME_APP_MINUTES` | routing appids for todo / calendar / minutes APIs |
 | `JOYME_MAIL_APPID` / `JOYME_MAIL_FN_PUBKEY` / `JOYME_MAIL_FN_LOGIN` / `JOYME_MAIL_SOURCE` | mail auth app id & function names |
 | `JOYME_BIZ_FLAG` / `JOYME_MSG_SUMMARY_URL` | message business flag; chat-summary service URL |
+| `JOYME_IMAGEGEN_URL` | AI image generation endpoint |
+| `JOYME_VIDEO_GW` / `JOYME_VIDEO_APPCODE` | AI video gateway origin and app code (header auth) |
 | `ME_TOKEN` | optional: reuse an existing token instead of the bridge handshake |
 
 ## Repository layout
@@ -101,6 +108,7 @@ All network endpoints and identifiers are runtime configuration — the repo shi
 bin/joyme.js         core CLI: messaging, todos, calendar, minutes, docs, contacts, upload (zero deps)
 bin/mail-full.js     full-featured mail client: read + write + batch management (zero deps)
 bin/image-gen.js     AIGC image generation (text→image, image→image, download)
+bin/video-gen.js     AIGC video generation (text→video, async submit/poll, resumable, zero deps)
 bin/jm-forensics.js  local forensics: raw IM logs, card screenshot URLs, card metadata (zero deps)
 bot/joyme-bot.js     optional bot push channel (socket.io, needs npm install)
 ```
@@ -154,6 +162,7 @@ This project is a personal technical study of desktop-client-to-API communicatio
 | 文件 | 图片直传、大文件分片断点续传（>10MB 自动分片） | `joyme.js --upload-image`、`--upload-file` |
 | 文件 | 聊天里发图（自动上传+发送） | `joyme.js --send-image` |
 | AI | 文生图、图生图 | `image-gen.js` |
+| AI | 文生视频（异步提交→轮询→下载，支持断点恢复） | `video-gen.js` |
 | 推送 | 可选的机器人推送通道 | `bot/joyme-bot.js` |
 
 > 群管理类操作（`--create-group`、`--group-members`、`--group-announcement`）已实现，但受服务端权限校验限制，部分账号会返回"无权限"。`--later-list`（稍后处理列表）可用。
@@ -196,6 +205,10 @@ $N bin/joyme.js jdme.search.search '{"keyword":"<姓名>","from":"joywork","ext"
 
 # AI 画图
 $N bin/image-gen.js "周履约率柱状图"
+
+# AI 视频生成（异步，轮询到完成后打印视频 URL）
+$N bin/video-gen.js --prompt "清晨的森林湖泊，薄雾缭绕" --duration 5 --mode 720p
+$N bin/video-gen.js --resume bin/video-tasks/video-task-<id>.json   # 恢复中断的等待
 ```
 
 更多用法（含全部参数）见各脚本文件头注释。
@@ -218,6 +231,8 @@ $N bin/image-gen.js "周履约率柱状图"
 | `JOYME_APP_TODO` / `JOYME_APP_CAL` / `JOYME_APP_MINUTES` | 待办/日程/纪要 API 的路由 appid |
 | `JOYME_MAIL_APPID` / `JOYME_MAIL_FN_PUBKEY` / `JOYME_MAIL_FN_LOGIN` / `JOYME_MAIL_SOURCE` | 邮件认证 app id 与接口名 |
 | `JOYME_BIZ_FLAG` / `JOYME_MSG_SUMMARY_URL` | 消息 business flag；聊天摘要服务地址 |
+| `JOYME_IMAGEGEN_URL` | AI 画图接口地址 |
+| `JOYME_VIDEO_GW` / `JOYME_VIDEO_APPCODE` | AI 视频网关地址与 app code（header 鉴权） |
 | `ME_TOKEN` | 可选：复用已有 token，跳过桥接握手 |
 
 ## 目录结构
@@ -226,6 +241,7 @@ $N bin/image-gen.js "周履约率柱状图"
 bin/joyme.js         核心 CLI：消息、待办、日程、纪要、文档、联系人、上传（零依赖）
 bin/mail-full.js     邮件全家桶：读 + 写 + 批量管理（零依赖）
 bin/image-gen.js     AIGC 画图（文生图、图生图、下载）
+bin/video-gen.js     AIGC 视频（文生视频、异步提交/轮询、断点恢复，零依赖）
 bin/jm-forensics.js  本地取证：IM 日志原文、卡片截图 URL、卡片元信息（零依赖）
 bot/joyme-bot.js     可选机器人推送通道（socket.io，需 npm install）
 ```

@@ -6,3 +6,4 @@ outputs/
 .env.local
 *.env.local
 test.png
+video-tasks/
