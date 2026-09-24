@@ -22,6 +22,7 @@ Give Claude (or any CLI agent) direct access to a JD-style enterprise IM ("JingM
 | Mail | **Send / reply / forward, with attachments** | `mail-full.js send / reply / forward` |
 | Mail | Batch mark read/unread, flag, categorize, move, delete, folder management | `mail-full.js batch-*`, `folders`, `create-folder` |
 | Todos | Search / create todos | `joyme.js meetingAgent.color.taskCommonSearch`, `--create-task` |
+| OA | **Process todos by category, quick-approve, my applies, process detail, approve/reject** | `oa.js` |
 | Calendar | Search / create appointments | `joyme.js joyday.appointment.*`, `--create-appointment` |
 | Minutes | Search meeting minutes, get transcripts (ASR), details | `joyme.js minutes.*` |
 | Docs | Full-text search and read JoySpace documents | `joyme.js --joyspace` |
@@ -68,6 +69,11 @@ $N bin/mail-full.js send --to a@x.com --subject "Report" --body "See attached" -
 $N bin/joyme.js meetingAgent.color.taskCommonSearch '{"createTime":{"start":"2026-08-24 00:00:00","end":"2026-09-24 23:59:59"},"pageSize":20}'
 $N bin/joyme.js --create-task '{"title":"Review PR","endTime":"2026-09-30"}'
 
+# OA process center (read-only safe; approve/reject are write ops — confirm first)
+$N bin/oa.js categories
+$N bin/oa.js my-applies --start 2026-09-01
+$N bin/oa.js detail --piid <processInstanceId>
+
 # Employee search — full param shape, not just a keyword
 $N bin/joyme.js jdme.search.search '{"keyword":"<name>","from":"joywork","ext":"","includeIndexSet":["*"],"origin":["CONTACT"],"includeSaaS":true,"start":0,"size":10}'
 
@@ -113,6 +119,7 @@ All network endpoints and identifiers are runtime configuration — the repo shi
 ```
 bin/joyme.js         core CLI: messaging, todos, calendar, minutes, docs, contacts, upload (zero deps)
 bin/mail-full.js     full-featured mail client: read + write + batch management (zero deps)
+bin/oa.js            OA process center: todo categories, quick-approve, my applies, detail, approve/reject (zero deps)
 bin/image-gen.js     AIGC image generation (text→image, image→image, download)
 bin/video-gen.js     AIGC video generation (text→video, async submit/poll, resumable, zero deps)
 bin/jm-forensics.js  local forensics: raw IM logs, card screenshot URLs, card metadata (zero deps)
@@ -161,6 +168,7 @@ This project is a personal technical study of desktop-client-to-API communicatio
 | 邮件 | **发信/回复/转发，支持附件** | `mail-full.js send / reply / forward` |
 | 邮件 | 批量已读/未读、旗标、分类、移动、删除、文件夹管理 | `mail-full.js batch-*`、`folders`、`create-folder` |
 | 待办 | 搜待办、建待办 | `joyme.js meetingAgent.color.taskCommonSearch`、`--create-task` |
+| OA | **待办分类、快捷审批、我发起的流程、流程详情、通过/驳回** | `oa.js` |
 | 日程 | 搜日程、建日程 | `joyme.js joyday.appointment.*`、`--create-appointment` |
 | 纪要 | 搜会议纪要、取转写(ASR)、详情 | `joyme.js minutes.*` |
 | 文档 | JoySpace 文档全文搜索与读取 | `joyme.js --joyspace` |
@@ -207,6 +215,11 @@ $N bin/mail-full.js send --to a@x.com --subject "周报" --body "见附件" --at
 $N bin/joyme.js meetingAgent.color.taskCommonSearch '{"createTime":{"start":"2026-08-24 00:00:00","end":"2026-09-24 23:59:59"},"pageSize":20}'
 $N bin/joyme.js --create-task '{"title":"审PR","endTime":"2026-09-30"}'
 
+# OA 流程中心（读操作安全；approve/reject 是写操作，先确认）
+$N bin/oa.js categories
+$N bin/oa.js my-applies --start 2026-09-01
+$N bin/oa.js detail --piid <流程实例ID>
+
 # 员工搜索——要传完整参数，不是只传关键词
 $N bin/joyme.js jdme.search.search '{"keyword":"<姓名>","from":"joywork","ext":"","includeIndexSet":["*"],"origin":["CONTACT"],"includeSaaS":true,"start":0,"size":10}'
 
@@ -252,6 +265,7 @@ $N bin/video-gen.js --resume bin/video-tasks/video-task-<id>.json   # 恢复中�
 ```
 bin/joyme.js         核心 CLI：消息、待办、日程、纪要、文档、联系人、上传（零依赖）
 bin/mail-full.js     邮件全家桶：读 + 写 + 批量管理（零依赖）
+bin/oa.js            OA 流程中心：待办分类、快捷审批、我发起的、详情、通过/驳回（零依赖）
 bin/image-gen.js     AIGC 画图（文生图、图生图、下载）
 bin/video-gen.js     AIGC 视频（文生视频、异步提交/轮询、断点恢复，零依赖）
 bin/jm-forensics.js  本地取证：IM 日志原文、卡片截图 URL、卡片元信息（零依赖）
