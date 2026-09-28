@@ -10,6 +10,19 @@ Give Claude (or any CLI agent) direct access to a JD-style enterprise IM ("JingM
 
 **This repository is for educational and research purposes only.** See [Disclaimer](#disclaimer).
 
+## Why I built this
+
+I used to do everything through the AI assistant built into the enterprise IM desktop client. It works, but I kept hitting the same walls:
+
+- **It can't really work with my files.** I'd ask it to analyze a spreadsheet or a report draft, and it would need me to upload or paste content into the chat. It has no concept of my project directory. Meanwhile, Claude Code / Codex-style CLI agents live *in* the repo — they read the actual files, run the actual scripts, and fix their own mistakes.
+- **Every conversation starts from zero.** The assistant has no persistent project context. My local agent has the whole git history, CLAUDE.md, and memory of what we did last week.
+- **Output quality is capped by the hosted model.** I wanted frontier models on the hard parts and cheap fast ones on the boring parts — that's only possible if the agent runs on my machine.
+- **The official assistant is a closed pipeline.** When it fails (and it does — timeouts, truncated replies, "please rephrase"), there's nothing to debug. Here, every script is 200 lines of readable Node.js I can step through with `console.log` when something breaks — which is exactly how this repo got built.
+
+So the question became: what if the agent I trust for real engineering work could *also* send my messages, triage my inbox, file my todos, book my calendar, generate the weekly report images, and draft the slides — natively, from the same terminal where it writes code? That's this repo: **the enterprise-IM capabilities become plain CLI tools, and the intelligence layer is whichever agent you run locally.**
+
+The security model also fits how I want to work: no third-party server ever touches my credentials. The scripts reuse the login session of the already-running desktop client through its local bridge — nothing is stored, proxied, or uploaded anywhere by this code. What leaves the machine is exactly the same API traffic the official client itself makes.
+
 ## What it can do
 
 | Category | Capability | Tool |
@@ -155,6 +168,19 @@ This project is a personal technical study of desktop-client-to-API communicatio
 让 Claude（或任何 CLI 智能体）直接使用京Me 类企业 IM 桌面端的全部能力——消息、邮件、待办、日程、会议纪要、文档、员工搜索、文件/图片上传、AI 画图——通过几个零依赖的 Node.js 小脚本，走桌面端官方客户端同样的接口。
 
 **本仓库仅供学习研究用途。** 见[免责声明](#免责声明)。
+
+## 为什么做这个
+
+以前我的企业 IM 操作全靠桌面端自带的 AI 助手。能用，但总有几堵翻不过去的墙：
+
+- **它没法真正处理我的文件。** 让它分析个表格、看个报告草稿，都得先上传或粘贴到对话框里——它对我的项目目录没有概念。而 Claude Code / Codex 这类本地 CLI 智能体本来就活在仓库里：读的是真实文件，跑的是真实脚本，错了自己改。
+- **每次对话都从零开始。** 助手没有持久的工程上下文；本地智能体有完整的 git 历史、CLAUDE.md、上周一起干过什么的记忆。
+- **能力上限被托管的模型锁死。** 我想难题用最强的模型、杂活用便宜快的模型——只有智能体跑在我本机上才做得到。
+- **官方助手是条封闭管道。** 它出错的时候（超时、回复截断、“请换个说法再试”）你什么都排查不了。这里每个脚本就是两百行可读的 Node.js，哪里不对 `console.log` 打进去就能看——这个仓库本身就是这么调试出来的。
+
+所以问题变成了：如果我最信任干活的那套智能体，**还能顺手**发消息、清收件箱、记待办、订日程、生成周报配图、起草幻灯片——就在它写代码的同一个终端里——会怎样？这就是本仓库：**把企业 IM 的能力变成普通 CLI 工具，智力层由你在本地跑哪个智能体决定。**
+
+安全模型也合我的工作方式：没有任何第三方服务器碰我的凭证。脚本通过本地桥接复用正在运行的桌面端的登录态——本仓库的代码不存储、不中转、不上传任何东西；离开这台机器的流量，和官方客户端自己发的 API 请求一模一样。
 
 ## 能做什么
 
