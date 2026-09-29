@@ -63,6 +63,69 @@ const TEMPLATE = {
   JOYME_BIZ_FLAG: { src: "probe", desc: "消息 business flag", candidates: [] },
 };
 
+// ---- JOYME_APPID 自动发现 ----
+// 桌面端 AI 助手（joyai）的离线 JS 包里写死了同一 appid。包缓存于
+// %APPDATA%/ME/eemf/cache/ME_DESKTOP/joyai.jd.com/<app>/<version>/ 下，resource.json
+// 记录了每个分片的公网 CDN URL。本地缓存与公网任取其一：
+//   - 本地：扫描 chat-offline 缓存目录所有 .js，找 appid:"XXX" 且邻近 desk.agent 调用的值
+//   - 公网：按 resource.json 的 URL 拉主包，同样提取
+async function discoverAppid() {
+  const os = require("os");
+  const fsx = require("fs");
+  const root = fsx.existsSync ? path.join(os.homedir(), "AppData", "Roaming", "ME", "eemf", "cache", "ME_DESKTOP") : null;
+  const extract = (t) => {
+    const m = t.match(/appid:\s*"([A-Z][A-Z_0-9]{3,20})"/);
+    return m ? m[1] : null;
+  };
+  // 1) 本地缓存
+  if (root && fsx.existsSync(root)) {
+    const base = path.join(root, "joyai.jd.com", "chat-offline");
+    let versions = [];
+    try { versions = fsx.readdirSync(base); } catch { /* none */ }
+    for (const v of versions) {
+      const d = path.join(base, v);
+      let stack = [d], files = [];
+      while (stack.length && files.length < 200) {
+        const cur = stack.pop();
+        let es; try { es = fsx.readdirSync(cur, { withFileTypes: true }); } catch { continue; }
+        for (const e of es) {
+          const p = path.join(cur, e.name);
+          if (e.isDirectory()) stack.push(p);
+          else if (e.name.endsWith(".js")) files.push(p);
+        }
+      }
+      for (const f of files) {
+        try {
+          const t = fsx.readFileSync(f, "utf8");
+          if (t.includes("desk.agent")) {
+            const id = extract(t);
+            if (id) return { value: id, source: `本地缓存 ${path.relative(root, f)}` };
+          }
+        } catch { /* skip */ }
+      }
+    }
+  }
+  // 2) 公网 CDN（resource.json 指路）
+  if (root && fsx.existsSync(root)) {
+    let versions = [];
+    try { versions = fsx.readdirSync(path.join(root, "joyai.jd.com", "chat-offline")); } catch { /* none */ }
+    for (const v of versions) {
+      const rj = path.join(root, "joyai.jd.com", "chat-offline", v, "resource.json");
+      try {
+        const arr = JSON.parse(fsx.readFileSync(rj, "utf8"));
+        const main = arr.find(it => /^index\.html$/.test(it.file_name || "") === false && /jd_joyai-biz.*desktop_offline.*\.js$/.test(it.url || "") && !/^\d+\./.test((it.url || "").split("/").pop()));
+        if (main) {
+          const res = await rfetch(main.url, {}, 0);
+          const t = await res.text();
+          const id = extract(t);
+          if (id) return { value: id, source: `公网 CDN ${main.url.slice(0, 60)}...` };
+        }
+      } catch { /* skip */ }
+    }
+  }
+  return null;
+}
+
 async function rfetch(url, opts = {}, retries = 1) {
   let lastErr;
   for (let i = 0; i <= retries; i++) {
@@ -171,7 +234,12 @@ async function main() {
     } else if (spec.src === "const") {
       v = spec.value; auto++;
     } else { // probe
-      const hit = spec.candidates.find(c => c);
+      let hit = spec.candidates.find(c => c);
+      if (k === "JOYME_APPID" && !hit) {
+        console.log("    正在自动发现 JOYME_APPID（扫描 joyai 缓存 / 公网 CDN）...");
+        const found = await discoverAppid();
+        if (found) { hit = found.value; console.log(`    来源: ${found.source}`); }
+      }
       if (!hit) { lines.push(`# ${k}（${spec.desc}）— 无法自动推导，请人工填写（参考 README「配置发现」一节）`); manual++; continue; }
       v = hit; auto++;
     }
