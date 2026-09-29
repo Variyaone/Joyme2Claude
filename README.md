@@ -107,7 +107,17 @@ More usage details (including all flags) are in the header comment of each scrip
 
 ## Environment variables
 
-All network endpoints and identifiers are runtime configuration — the repo ships only placeholders. Put them in a `.env.local` next to `bin/` (git-ignored): every script auto-loads it at startup, so a plain `node bin/joyme.js ...` just works. Values can also come from your shell environment, which takes precedence.
+**First run on a new machine: `node bin/doctor.js`** — it bootstraps most of the config automatically:
+
+1. Checks the desktop client's local bridge (`127.0.0.1:8988`)
+2. Fetches the public web entry (`https://me.jd.com`, no login needed) and parses the `window.__MF_ENV` injection — gateway hosts, app names and other runtime constants live there, served from a public CDN
+3. Probes each gateway host for reachability
+4. Writes `.env.local`, **merging with — never dropping — existing values**
+5. Attempts a full auth handshake (`login.getUserProfile`) to verify the config end-to-end
+
+Use `--check` to audit an existing config without writing, `--force` to regenerate from scratch. A few deployment-specific identifiers (gateway appid, SSO app key) cannot always be auto-derived — doctor marks those with `请人工填写` comments. For those, open the web version in a browser, F12 → Network, trigger the relevant action once, and read the values from the request (same technique the desktop client uses).
+
+All network endpoints and identifiers are runtime configuration — the repo ships only placeholders. The scripts auto-load `.env.local` next to `bin/` (git-ignored).
 
 | Variable | Purpose |
 |---|---|
@@ -266,7 +276,17 @@ $N bin/video-gen.js --resume bin/video-tasks/video-task-<id>.json   # 恢复中�
 
 ## 环境变量
 
-所有网络地址与标识符都是运行时配置——仓库里只有占位符。写进 `bin/` 旁边的 `.env.local`（已被 git 忽略）：每个脚本启动时自动加载，直接 `node bin/joyme.js ...` 即可。也可以放在 shell 环境里（优先级更高）。
+**新机器第一次运行：`node bin/doctor.js`** ——大部分配置自动自举：
+
+1. 检查桌面端本地桥（`127.0.0.1:8988`）
+2. 拉公网网页版入口（`https://me.jd.com`，无需登录），解析 `window.__MF_ENV` 注入——网关地址、应用名等运行时常量都在里面，公网 CDN 直接可取
+3. 探测各网关 host 可达性
+4. 写入 `.env.local`（**合并现有值，绝不丢失已有配置**）
+5. 做一次完整认证握手（`login.getUserProfile`）端到端验证
+
+`--check` 只体检不写文件，`--force` 从零重生成。少数部署相关标识符（网关 appid、SSO app key）不一定能自动推导——doctor 会在文件里用注释标注。这些值可以用浏览器打开网页版、F12 → Network、触发一次对应操作、从请求里读出来（和桌面端用的是同一批值）。
+
+所有网络地址与标识符都是运行时配置——仓库里只有占位符。脚本自动加载 `bin/` 旁边的 `.env.local`（已被 git 忽略）。
 
 | 变量 | 用途 |
 |---|---|
