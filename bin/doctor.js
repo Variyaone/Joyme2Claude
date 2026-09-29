@@ -158,16 +158,11 @@ async function rfetch(url, opts = {}, retries = 1) {
   throw lastErr;
 }
 
-// 1. 桥探测
+// 1. 桥探测（只探测 8988 端口本身——桌面端主进程名随版本不同，端口才是稳定信号）
 function checkBridge() {
-  const ok = { bridge: false, desktop: false };
-  try {
-    execFileSync("tasklist", ["/FI", "IMAGENAME eq JDITDesk.exe"], { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] });
-    // tasklist 在部分环境不可用/被策略拦——不作为硬依赖
-  } catch { /* ignore */ }
   return fetch("http://127.0.0.1:8988/hioffice?from=hio_plugin_joydesk", { method: "POST", signal: AbortSignal.timeout(3000) })
     .then(r => ({ bridge: r.status > 0, desktop: r.status > 0 }))
-    .catch(() => ok);
+    .catch(() => ({ bridge: false, desktop: false }));
 }
 
 // 2. 解析公网 __MF_ENV
