@@ -63,28 +63,30 @@ const TEMPLATE = {
   JOYME_BIZ_FLAG: { src: "probe", desc: "消息 business flag", candidates: [] },
 };
 
-// ---- JOYME_APPID 自动发现 ----
-// 桌面端 AI 助手（joyai）的离线 JS 包里写死了同一 appid。包缓存于
-// %APPDATA%/ME/eemf/cache/ME_DESKTOP/joyai.jd.com/<app>/<version>/ 下，resource.json
-// 记录了每个分片的公网 CDN URL。本地缓存与公网任取其一：
-//   - 本地：扫描 chat-offline 缓存目录所有 .js，找 appid:"XXX" 且邻近 desk.agent 调用的值
-//   - 公网：按 resource.json 的 URL 拉主包，同样提取
-async function discoverAppid() {
+// ---- JOYME_APPID 自动发现（三级兜底）----
+// 该值不在网页版流量里（网页版用另一批 appid），来源按优先级：
+//   A) 本地 joyai 缓存：桌面端 AI 助手的离线 JS 写死了同一 appid，缓存于
+//      %APPDATA%/ME/eemf/cache/ME_DESKTOP/joyai.jd.com/<app>/<version>/（用过一次 AI 助手就有）
+//   B) 公网 CDN：resource.json 里记录的分片 URL，无需登录直接拉
+//   C) 在线握手探测：拿候选 appid 逐个调 desk.agent.auth.encrypt（公网 JSON 端点），
+//      返回 code:0 + aesKey 即有效——不依赖任何本地缓存
+async function discoverAppid(gwBase) {
   const os = require("os");
   const fsx = require("fs");
-  const root = fsx.existsSync ? path.join(os.homedir(), "AppData", "Roaming", "ME", "eemf", "cache", "ME_DESKTOP") : null;
   const extract = (t) => {
     const m = t.match(/appid:\s*"([A-Z][A-Z_0-9]{3,20})"/);
     return m ? m[1] : null;
   };
-  // 1) 本地缓存
+  let root = null;
+  try { root = path.join(os.homedir(), "AppData", "Roaming", "ME", "eemf", "cache", "ME_DESKTOP"); } catch { /* */ }
+
+  // A) 本地缓存
   if (root && fsx.existsSync(root)) {
     const base = path.join(root, "joyai.jd.com", "chat-offline");
     let versions = [];
     try { versions = fsx.readdirSync(base); } catch { /* none */ }
     for (const v of versions) {
-      const d = path.join(base, v);
-      let stack = [d], files = [];
+      let stack = [path.join(base, v)], files = [];
       while (stack.length && files.length < 200) {
         const cur = stack.pop();
         let es; try { es = fsx.readdirSync(cur, { withFileTypes: true }); } catch { continue; }
@@ -105,7 +107,7 @@ async function discoverAppid() {
       }
     }
   }
-  // 2) 公网 CDN（resource.json 指路）
+  // B) 公网 CDN（resource.json 指路）
   if (root && fsx.existsSync(root)) {
     let versions = [];
     try { versions = fsx.readdirSync(path.join(root, "joyai.jd.com", "chat-offline")); } catch { /* none */ }
@@ -113,7 +115,7 @@ async function discoverAppid() {
       const rj = path.join(root, "joyai.jd.com", "chat-offline", v, "resource.json");
       try {
         const arr = JSON.parse(fsx.readFileSync(rj, "utf8"));
-        const main = arr.find(it => /^index\.html$/.test(it.file_name || "") === false && /jd_joyai-biz.*desktop_offline.*\.js$/.test(it.url || "") && !/^\d+\./.test((it.url || "").split("/").pop()));
+        const main = arr.find(it => /jd_joyai-biz.*desktop_offline.*\.js$/.test(it.url || "") && !/^\d+\./.test((it.url || "").split("/").pop()));
         if (main) {
           const res = await rfetch(main.url, {}, 0);
           const t = await res.text();
@@ -122,6 +124,27 @@ async function discoverAppid() {
         }
       } catch { /* skip */ }
     }
+  }
+  // C) 在线握手探测（零依赖兜底：桌面端部署常见 appid 候选 + 从 H5 缓存提取过的已知值）
+  const CANDIDATES = ["JDME_DESKTOP", "JDME", "JOYAI", "JDME_WEB", "ME_DESKTOP"];
+  const probe = async (appid) => {
+    const content = JSON.stringify({
+      method: "query", param: "appToken",
+      timestamp: String(Math.floor(Date.now() / 1000)),
+      from: "hio_plugin_joydesk", to: "HiOfficeClient",
+    });
+    try {
+      const res = await rfetch(`${gwBase}/?functionId=desk.agent.auth.encrypt&appid=${appid}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ appid, body: { content, jdmeAppId: "ee" }, functionId: "desk.agent.auth.encrypt" }),
+      }, 0);
+      const j = await res.json();
+      return j.code === 0 && !!j.data?.aesKey;
+    } catch { return false; }
+  };
+  for (const c of CANDIDATES) {
+    if (await probe(c)) return { value: c, source: "在线握手探测" };
   }
   return null;
 }
@@ -236,8 +259,8 @@ async function main() {
     } else { // probe
       let hit = spec.candidates.find(c => c);
       if (k === "JOYME_APPID" && !hit) {
-        console.log("    正在自动发现 JOYME_APPID（扫描 joyai 缓存 / 公网 CDN）...");
-        const found = await discoverAppid();
+        console.log("    正在自动发现 JOYME_APPID（本地缓存 / 公网 CDN / 在线握手探测）...");
+        const found = await discoverAppid(gw);
         if (found) { hit = found.value; console.log(`    来源: ${found.source}`); }
       }
       if (!hit) { lines.push(`# ${k}（${spec.desc}）— 无法自动推导，请人工填写（参考 README「配置发现」一节）`); manual++; continue; }
