@@ -30,6 +30,8 @@ The security model also fits how I want to work: no third-party server ever touc
 | Messaging | Send text / image messages to a person or a group | `joyme.js --send`, `--send-image` |
 | Messaging | Server-side AI summary of recent chats | `joyme.js --msg-summary` |
 | Messaging | Read raw chat history from the desktop client's local logs (~7 days) | `jm-forensics.js --im-log` |
+| Messaging | **Full-text search over an ever-growing local chat archive** (new messages + any history you scrolled past, collected nightly) | `im-archive.js collect / search` |
+| Mail | **Full-history local mail full-text search** (reads the desktop client's own SQLite mail cache, no API) | `im-archive.js mail <keyword>` |
 | Messaging | Extract bot-pushed report-card screenshots (signed OSS URLs) + metadata | `jm-forensics.js --card-images`, `--card-meta` |
 | Mail | Search inbox / sent / custom folders, read a message, look up recipients | `mail-full.js search / detail / lookup-recipient` |
 | Mail | **Send / reply / forward, with attachments** | `mail-full.js send / reply / forward` |
@@ -146,6 +148,7 @@ bin/oa.js            OA process center: todo categories, quick-approve, my appli
 bin/image-gen.js     AIGC image generation (text→image, image→image, download)
 bin/video-gen.js     AIGC video generation (text→video, async submit/poll, resumable, zero deps)
 bin/jm-forensics.js  local forensics: raw IM logs, card screenshot URLs, card metadata (zero deps)
+bin/im-archive.js    persistent chat archive: collect IM logs into a searchable store + full-history local mail search (zero deps; mail needs Node ≥ 22.5)
 bot/joyme-bot.js     optional bot push channel (socket.io, needs npm install)
 ```
 
@@ -158,7 +161,8 @@ bot/joyme-bot.js     optional bot push channel (socket.io, needs npm install)
 - **Todo search params are range objects, not timestamps**: `taskCommonSearch` takes `{"createTime":{"start":"YYYY-MM-DD HH:mm:ss","end":"..."},"pageSize":20}` — passing epoch millis returns a fastjson parse error.
 - **Employee search needs the full param shape**: `jdme.search.search` with only `{"keyword":...}` fails with "搜索类型不能空"; pass `{"keyword":...,"from":"joywork","origin":["CONTACT"],"includeIndexSet":["*"],"includeSaaS":true,"start":0,"size":10}`.
 - Card content blobs in IM logs are a semi-compressed format; the scripts lenient-decode them and regex out the ASCII fields rather than fully decompressing.
-- Chat logs roll over (~7 days); older files are scanned automatically.
+- Chat logs roll over (~1.5 days); `im-archive.js collect` snapshots them into its store before they're gone — run it from a cron/nightly pipeline, then `search` works across everything ever collected. The IM client has **no standalone history database file** (history lives server-side + in-memory); what makes the archive complete is that the client logs every `loadMore` batch it fetches when you scroll a chat — so history lands in the archive as you browse.
+- `im-archive.js mail` reads the desktop client's own local mail cache (`mail.db`, SQLite) — full history, body text included, no API call. The DB is locked while the client runs, so the script queries a copy in `%TEMP%`.
 
 ## Disclaimer
 
@@ -199,6 +203,8 @@ This project is a personal technical study of desktop-client-to-API communicatio
 | 消息 | 给个人/群发文字、发图片 | `joyme.js --send`、`--send-image` |
 | 消息 | 近期聊天记录的服务端 AI 摘要 | `joyme.js --msg-summary` |
 | 消息 | 从桌面端本地日志读聊天记录原文（约7天） | `jm-forensics.js --im-log` |
+| 消息 | **聊天记录持久归档 + 全文检索**（新消息 + 你翻过的历史，每晚采集累积） | `im-archive.js collect / search` |
+| 邮件 | **邮件全历史本地全文检索**（直读桌面端自己的 SQLite 邮件缓存，无需 API） | `im-archive.js mail <关键词>` |
 | 消息 | 提取机器人推送的报表卡片截图（OSS 签名直链）+ 元信息 | `jm-forensics.js --card-images`、`--card-meta` |
 | 邮件 | 搜收件箱/已发送/自定义文件夹、读正文、查收件人 | `mail-full.js search / detail / lookup-recipient` |
 | 邮件 | **发信/回复/转发，支持附件** | `mail-full.js send / reply / forward` |
@@ -315,6 +321,7 @@ bin/oa.js            OA 流程中心：待办分类、快捷审批、我发起�
 bin/image-gen.js     AIGC 画图（文生图、图生图、下载）
 bin/video-gen.js     AIGC 视频（文生视频、异步提交/轮询、断点恢复，零依赖）
 bin/jm-forensics.js  本地取证：IM 日志原文、卡片截图 URL、卡片元信息（零依赖）
+bin/im-archive.js    聊天记录持久归档：采集进可检索 store + 邮件全历史本地检索（零依赖；邮件需 Node ≥ 22.5）
 bot/joyme-bot.js     可选机器人推送通道（socket.io，需 npm install）
 ```
 
@@ -327,7 +334,8 @@ bot/joyme-bot.js     可选机器人推送通道（socket.io，需 npm install�
 - **待办搜索参数是时间范围对象，不是时间戳**：`taskCommonSearch` 要传 `{"createTime":{"start":"YYYY-MM-DD HH:mm:ss","end":"..."},"pageSize":20}`，传毫秒时间戳会报 fastjson 解析错误。
 - **员工搜索要传完整参数**：`jdme.search.search` 只传 `{"keyword":...}` 会报"搜索类型不能空"；要传 `{"keyword":...,"from":"joywork","origin":["CONTACT"],"includeIndexSet":["*"],"includeSaaS":true,"start":0,"size":10}`。
 - IM 日志里的卡片正文是半压缩格式，脚本用容错解码+正则提取 ASCII 字段，不做完整解压。
-- 聊天日志约 7 天滚动，旧文件会自动扫描。
+- **聊天日志仅 ~1.5 天滚动**：`im-archive.js collect` 在日志滚掉前快照进自己的 store（默认 `%LOCALAPPDATA%/joyme2claude/im-store`，不进 git），挂个夜间 cron 后 `search` 就能查到所有采集过的内容。IM 客户端**没有独立的历史库文件**（历史在服务端+内存）——归档之所以能覆盖历史，是因为客户端把你滚动会话时拉取的每一批 `loadMore` 消息都逐字写进了日志，翻阅即落盘。
+- `im-archive.js mail` 直读桌面端自己的本地邮件缓存（`mail.db`，SQLite），全历史含正文，不调 API。客户端运行时该库被锁，脚本复制到 `%TEMP%` 后只读查询。
 
 ## 免责声明
 
