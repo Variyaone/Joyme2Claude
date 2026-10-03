@@ -7,3 +7,4 @@ outputs/
 *.env.local
 test.png
 video-tasks/
+bot/inbox.jsonl
